@@ -10,7 +10,8 @@ def interpret(rid, raw):
         '{"produto","quantidade"(número),"unidade","especificacoes","cidade_destino","uf_destino","cep","prazo_max_dias"(número|null)}. '
         "Use null no que não foi informado; nunca invente.", raw)
     db.ex("UPDATE requests SET item=?, status='cotando' WHERE id=?", (json.dumps(item, ensure_ascii=False), rid))
-    db.log(rid, f"Interpretador: {item.get('quantidade')} {item.get('unidade')} de {item.get('produto')} para {item.get('cidade_destino')}")
+    qtd_log = f"{item.get('quantidade')} {item.get('unidade')}" if item.get('quantidade') else "qtd não informada"
+    db.log(rid, f"Interpretador: {qtd_log} de {item.get('produto')} para {item.get('cidade_destino')}")
     return item
 
 def web_fallback(item):
@@ -18,7 +19,10 @@ def web_fallback(item):
     import re, html as H
     UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36"}
     qy = f"{item.get('produto')} {item.get('especificacoes') or ''} comprar preço"
-    page = httpx.post("https://html.duckduckgo.com/html/", data={"q": qy}, headers=UA, timeout=20, follow_redirects=True).text
+    try:
+        page = httpx.post("https://html.duckduckgo.com/html/", data={"q": qy}, headers=UA, timeout=20, follow_redirects=True).text
+    except Exception as e:
+        raise RuntimeError(f"Busca alternativa (DuckDuckGo) falhou: {e}")
     urls, seen = [], set()
     for h in re.findall(r'class="result__a"[^>]*href="([^"]+)"', page):
         m = re.search(r"uddg=([^&]+)", h); u = urllib.parse.unquote(m.group(1)) if m else h
@@ -64,7 +68,8 @@ def search(rid, item):
     db.log(rid, f"Pesquisador: {len(res)} fornecedores encontrados na web (com fonte)")
 
 def request_text(item):
-    return (f"Olá! Preciso de cotação: {item.get('quantidade')} {item.get('unidade') or 'un'} de {item.get('produto')}. "
+    qtd = f"{item.get('quantidade')} {item.get('unidade') or 'un'}" if item.get('quantidade') else "quantidade a definir"
+    return (f"Olá! Preciso de cotação: {qtd} de {item.get('produto')}. "
             f"Specs: {item.get('especificacoes') or '-'}. Entrega em {item.get('cidade_destino')}/{item.get('uf_destino')} "
             f"{item.get('cep') or ''}. Pode informar preço unitário, frete, prazo de entrega e quantidade disponível?")
 
@@ -267,19 +272,26 @@ async def on_telegram(chat_id, text):
 async def ingest_reply(qid, text):
     qt = db.q("SELECT * FROM quotes WHERE id=?", (qid,))[0]
     req = db.q("SELECT * FROM requests WHERE id=?", (qt["request_id"],))[0]
+    # Acumula histórico completo para o LLM ter contexto de todas as mensagens anteriores
+    prev = qt["raw_reply"] or ""
+    full_text = (prev + "\n" + text).strip()
     d = await asyncio.to_thread(llm.ask_json,
         "Você é o agente Parser. Converta a resposta livre do fornecedor em "
         '{"preco_unitario"(BRL número|null),"frete"(BRL número|null; 0 se disse frete grátis),"prazo_dias"(número|null),"qtd_disponivel"(número|null),"condicoes"(texto curto|null),"falta":[campos ausentes]}. Nunca invente.',
-        f"Pedido: {req['item']}\nResposta: {text}")
-    prev = qt["raw_reply"] or ""
+        f"Pedido: {req['item']}\nResposta completa do fornecedor até agora: {full_text}")
     db.ex("""UPDATE quotes SET unit_price=COALESCE(?,unit_price), freight=COALESCE(?,freight), lead_days=COALESCE(?,lead_days),
              available_qty=COALESCE(?,available_qty), conditions=COALESCE(?,conditions), raw_reply=? WHERE id=?""",
           (d.get("preco_unitario"), d.get("frete"), d.get("prazo_dias"), d.get("qtd_disponivel"), d.get("condicoes"),
-           (prev + "\n" + text).strip(), qid))
-    essential = [k for k in d.get("falta", []) if k in ("preco_unitario", "prazo_dias", "frete")]
-    if essential and qt["chat_id"]:
+           full_text, qid))
+    # Verifica o que está REALMENTE faltando no banco (após COALESCE), não só na última mensagem
+    qt_atual = db.q("SELECT * FROM quotes WHERE id=?", (qid,))[0]
+    faltando = []
+    if qt_atual["unit_price"] is None: faltando.append("preco unitario")
+    if qt_atual["lead_days"]  is None: faltando.append("prazo dias")
+    if qt_atual["freight"]    is None: faltando.append("frete")
+    if faltando and qt["chat_id"]:
         db.ex("UPDATE quotes SET status='respondida_parcial' WHERE id=?", (qid,))
-        await telegram.send(qt["chat_id"], "Obrigado! Ainda preciso de: " + ", ".join(essential).replace("_", " ") + ".")
+        await telegram.send(qt["chat_id"], "Obrigado! Ainda preciso de: " + ", ".join(faltando) + ".")
     else:
         db.ex("UPDATE quotes SET status='respondida' WHERE id=?", (qid,))
         if qt["chat_id"]: await telegram.send(qt["chat_id"], "Cotação registrada. Obrigado!")
