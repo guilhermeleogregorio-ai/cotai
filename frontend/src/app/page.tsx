@@ -93,6 +93,10 @@ const api = async (u: string, m = "GET", b?: unknown) => {
     headers: { "Content-Type": "application/json" },
     body: b ? JSON.stringify(b) : undefined,
   });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Erro ${res.status}: ${txt.slice(0, 200)}`);
+  }
   return res.json();
 };
 
