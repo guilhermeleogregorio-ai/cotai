@@ -19,7 +19,7 @@ app.add_middleware(
 )
 
 @app.on_event("startup")
-async def _s(): asyncio.create_task(telegram.poll(agents.on_telegram))
+async def _s(): asyncio.create_task(telegram.poll(agents.on_telegram, agents.on_callback))
 
 class New(BaseModel): text: str
 class Reply(BaseModel): text: str
@@ -30,7 +30,7 @@ def full(r):
     r["log"] = json.loads(r["log"]); r["ranking"] = json.loads(r["ranking"]) if r["ranking"] else None
     r["quotes"] = db.q("SELECT * FROM quotes WHERE request_id=?", (r["id"],))
     for qt in r["quotes"]:
-        qt["invite"] = agents.invite_links(qt, r["item"]) if r["item"] and qt["status"] == "aguardando_contato" else None
+        qt["invite"] = agents.invite_links(qt, r["item"]) if r["item"] and qt["status"] in ("aguardando_contato", "aguardando_confirmacao") else None
     return r
 
 @app.post("/api/requests")
@@ -47,11 +47,18 @@ def dec(rid: int, b: Decide): agents.decide(rid, b.quote_id); return {"ok": True
 async def neg(rid: int): return {"enviadas": await agents.negotiate(rid)}
 @app.post("/api/quotes/{qid}/reply")  # fallback: colar a resposta do fornecedor recebida em outro canal
 async def rep(qid: int, b: Reply): await agents.ingest_reply(qid, b.text); return {"ok": True}
+@app.post("/api/quotes/{qid}/confirm")
+async def confirm_q(qid: int): return {"ok": await agents.confirm_and_send(qid)}
 @app.get("/api/stats")
 def stats():
     d = db.q("SELECT COUNT(*) n, COALESCE(SUM(savings),0) s FROM requests WHERE status='decidido'")[0]
     return {"decididas": d["n"], "economia_total": d["s"], "fornecedores": db.q("SELECT * FROM suppliers ORDER BY wins DESC LIMIT 10")}
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.get("/")
-def index(): return FileResponse("static/index.html")
+def index():
+    return {
+        "app": "Comprador IA API",
+        "status": "online",
+        "docs": "http://127.0.0.1:8000/docs",
+        "frontend": "http://localhost:3000"
+    }

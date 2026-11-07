@@ -68,24 +68,95 @@ def request_text(item):
             f"Specs: {item.get('especificacoes') or '-'}. Entrega em {item.get('cidade_destino')}/{item.get('uf_destino')} "
             f"{item.get('cep') or ''}. Pode informar preço unitário, frete, prazo de entrega e quantidade disponível?")
 
+def tg_prefill_link(contact, text):
+    """Gera link do Telegram que deixa o texto digitado no campo de mensagem para confirmação manual."""
+    encoded = urllib.parse.quote(text)
+    c = (contact or "").strip()
+    if c.startswith("@"):
+        return f"https://t.me/{c.lstrip('@')}?text={encoded}"
+    if "t.me/" in c:
+        u = c.split("t.me/")[-1].split("?")[0].split("/")[0].strip()
+        if u: return f"https://t.me/{u}?text={encoded}"
+    return f"https://t.me/share/url?url=&text={encoded}"
+
 def wa_link(contact, text):
     digits = "".join(ch for ch in (contact or "") if ch.isdigit())
-    return f"https://wa.me/{digits}?text={urllib.parse.quote(text)}" if len(digits) >= 10 else None
+    encoded = urllib.parse.quote(text)
+    return f"https://wa.me/{digits}?text={encoded}" if len(digits) >= 10 else f"https://api.whatsapp.com/send?text={encoded}"
+
+async def confirm_and_send(qid: int):
+    """Envia a cotação diretamente ao fornecedor no Telegram após confirmação."""
+    qt = db.q("SELECT * FROM quotes WHERE id=?", (qid,))
+    if not qt: return False
+    qt = qt[0]
+    req = db.q("SELECT * FROM requests WHERE id=?", (qt["request_id"],))[0]
+    item = json.loads(req["item"]) if req["item"] else {}
+    txt = request_text(item) + f"\n(ref #{qt['id']})"
+    if qt["chat_id"]:
+        await telegram.send(qt["chat_id"], txt)
+        db.ex("UPDATE quotes SET status='enviada' WHERE id=?", (qid,))
+        db.log(qt["request_id"], f"Cotador: cotação #{qid} confirmada e enviada para {qt['supplier']}")
+        if req["buyer_chat"]:
+            await telegram.send(req["buyer_chat"], f"✅ Cotação #{qid} enviada para {qt['supplier']}.")
+        return True
+    return False
 
 async def dispatch(rid, item):
     txt = request_text(item)
+    req = db.q("SELECT buyer_chat FROM requests WHERE id=?", (rid,))
+    buyer_chat = req[0]["buyer_chat"] if req else None
+
     for qt in db.q("SELECT * FROM quotes WHERE request_id=?", (rid,)):
-        if qt["chat_id"]:  # fornecedor já conhecido no Telegram: envia direto
-            await telegram.send(qt["chat_id"], txt + f"\n(ref #{qt['id']})")
-            db.ex("UPDATE quotes SET status='enviada' WHERE id=?", (qt["id"],))
+        msg_with_ref = txt + f"\n(ref #{qt['id']})"
+        if qt["chat_id"] and buyer_chat:
+            # Fornecedor conhecido: pede confirmação interativa com botões ao comprador
+            db.ex("UPDATE quotes SET status='aguardando_confirmacao' WHERE id=?", (qt["id"],))
+            confirm_msg = (
+                f"📋 Pedido #{rid} — Confirmação de Cotação\n"
+                f"🏢 Fornecedor: {qt['supplier']}\n\n"
+                f"Mensagem pronta:\n\"{txt}\"\n\n"
+                f"Deseja enviar para este fornecedor?"
+            )
+            keyboard = {
+                "inline_keyboard": [
+                    [
+                        {"text": "✅ Confirmar e Enviar", "callback_data": f"confirm_quote:{qt['id']}"},
+                        {"text": "❌ Cancelar", "callback_data": f"cancel_quote:{qt['id']}"}
+                    ]
+                ]
+            }
+            await telegram.send(buyer_chat, confirm_msg, reply_markup=keyboard)
+        elif qt["chat_id"]:
+            # Conhecido mas sem buyer_chat (criado via web): aguarda confirmação no Kanban
+            db.ex("UPDATE quotes SET status='aguardando_confirmacao' WHERE id=?", (qt["id"],))
         else:
+            # Novo fornecedor: aguarda contato com pre-fill
             db.ex("UPDATE quotes SET status='aguardando_contato' WHERE id=?", (qt["id"],))
-    db.log(rid, "Cotador: solicitações enviadas pelo Telegram / links de convite gerados")
+            if buyer_chat:
+                tg_url = tg_prefill_link(qt.get("contact"), msg_with_ref)
+                wa_url = wa_link(qt.get("contact"), msg_with_ref)
+                buttons = [{"text": f"💬 Telegram ({qt['supplier']})", "url": tg_url}]
+                if wa_url:
+                    buttons.append({"text": "🟢 WhatsApp", "url": wa_url})
+                notice = (
+                    f"🔍 Pedido #{rid} — Fornecedor encontrado: {qt['supplier']}\n"
+                    f"Clique para abrir a mensagem digitada no chat e enviar com confirmação:"
+                )
+                await telegram.send(buyer_chat, notice, reply_markup={"inline_keyboard": [buttons]})
+
+    db.log(rid, "Cotador: cotações preparadas (aguardando confirmação ou contato pelo comprador)")
 
 def invite_links(qt, item):
-    tg = f"https://t.me/{BOT}?start={qt['token']}" if BOT else None
-    msg = request_text(item) + (f"\nResponda por aqui: {tg}" if tg else "")
-    return {"telegram": tg, "whatsapp": wa_link(qt["contact"], msg), "mensagem": msg}
+    bot_link = f"https://t.me/{BOT}?start={qt['token']}" if BOT else None
+    msg = request_text(item) + (f"\n(ref #{qt['id']})" if qt.get("id") else "")
+    share_link = f"https://t.me/share/url?url={urllib.parse.quote(bot_link or '')}&text={urllib.parse.quote(msg)}"
+    return {
+        "telegram": bot_link or share_link,
+        "telegram_share": share_link,
+        "whatsapp": wa_link(qt.get("contact"), msg),
+        "mensagem": msg,
+        "can_confirm": bool(qt.get("chat_id") and qt.get("status") in ("aguardando_confirmacao", "aguardando_contato")),
+    }
 
 HELP = ("👋 Sou o Comprador IA.\n/cotar <o que precisa> - abre uma cotação\n/status - seus pedidos\n"
         "/comparar - ranking com o que já respondeu\n/decidir [n] - fecha com a opção n do ranking (padrão: 1ª)")
@@ -137,6 +208,42 @@ def notify_buyer(rid, rows, why):
                     f"{r['lead_days'] if r['lead_days'] is not None else '—'}d)" for i, r in enumerate(rows, 1))
     telegram.send_sync(chat, f"📊 Pedido #{rid}\n{ls}\n\n💡 {why}\n\nResponda /decidir (1ª opção) ou /decidir 2.")
 
+async def on_callback(cb):
+    data = cb.get("data", "")
+    cb_id = cb.get("id")
+    msg = cb.get("message") or {}
+    chat_id = str(msg.get("chat", {}).get("id"))
+    msg_id = msg.get("message_id")
+
+    if data.startswith("confirm_quote:"):
+        try:
+            qid = int(data.split(":", 1)[1])
+            await telegram.answer_callback(cb_id, "Enviando cotação...")
+            ok = await confirm_and_send(qid)
+            if ok:
+                qt = db.q("SELECT supplier FROM quotes WHERE id=?", (qid,))
+                supp = qt[0]["supplier"] if qt else ""
+                await telegram.edit_message(chat_id, msg_id, f"✅ Cotação enviada com sucesso para {supp}!")
+            else:
+                await telegram.edit_message(chat_id, msg_id, "ℹ️ Não foi possível enviar via bot (chat não conectado). Use o link de compartilhamento.")
+        except Exception as e:
+            print("[callback error]", e)
+            await telegram.answer_callback(cb_id, "Erro ao processar.")
+
+    elif data.startswith("cancel_quote:"):
+        try:
+            qid = int(data.split(":", 1)[1])
+            await telegram.answer_callback(cb_id, "Envio cancelado.")
+            qt = db.q("SELECT supplier, request_id FROM quotes WHERE id=?", (qid,))
+            if qt:
+                supp = qt[0]["supplier"]
+                db.ex("UPDATE quotes SET status='aguardando_contato' WHERE id=?", (qid,))
+                db.log(qt[0]["request_id"], f"Cotador: envio da cotação #{qid} ({supp}) cancelado pelo comprador")
+                await telegram.edit_message(chat_id, msg_id, f"❌ Envio da cotação para {supp} cancelado.")
+        except Exception as e:
+            print("[callback error]", e)
+            await telegram.answer_callback(cb_id, "Erro ao cancelar.")
+
 async def on_telegram(chat_id, text):
     if await buyer_cmd(chat_id, text): return
     if text.startswith("/start"):
@@ -147,7 +254,12 @@ async def on_telegram(chat_id, text):
         db.ex("UPDATE quotes SET chat_id=?, status='enviada' WHERE id=?", (chat_id, qt["id"]))
         db.ex("UPDATE suppliers SET chat_id=? WHERE name=?", (chat_id, qt["supplier"]))
         item = json.loads(db.q("SELECT item FROM requests WHERE id=?", (qt["request_id"],))[0]["item"])
-        return await telegram.send(chat_id, request_text(item))
+        prompt_reply = (
+            f"📦 Cotação para *{qt['supplier']}*:\n"
+            f"{request_text(item)}\n\n"
+            f"💬 *Responda aqui com sua proposta* (informe preço unitário, frete e prazo de entrega)."
+        )
+        return await telegram.send(chat_id, prompt_reply)
     qs = db.q("SELECT * FROM quotes WHERE chat_id=? AND status IN ('enviada','respondida_parcial') ORDER BY id DESC", (chat_id,))
     if qs: await ingest_reply(qs[0]["id"], text)
     else: await telegram.send(chat_id, "Use /cotar para abrir uma cotação (/ajuda).")

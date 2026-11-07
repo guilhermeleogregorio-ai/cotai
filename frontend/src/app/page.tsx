@@ -5,6 +5,9 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 interface QuoteInvite {
   telegram?: string;
   whatsapp?: string;
+  telegram_bot?: string;
+  mensagem?: string;
+  can_confirm?: boolean;
 }
 
 interface Quote {
@@ -198,6 +201,20 @@ export default function Home() {
     }
   };
 
+  const cfm = async (qid: number) => {
+    try {
+      const res = await api(`/api/quotes/${qid}/confirm`, "POST");
+      if (res.ok) {
+        alert("Cotação enviada com sucesso ao fornecedor!");
+      } else {
+        alert("Não foi possível enviar via bot (chat não conectado). Use o link de compartilhamento.");
+      }
+      await loadData();
+    } catch (err) {
+      console.error("Erro ao confirmar envio:", err);
+    }
+  };
+
   const rep = async (qid: number) => {
     try {
       const text = replyTexts[qid] || "";
@@ -361,6 +378,18 @@ export default function Home() {
                               >
                                 WhatsApp
                               </a>
+                            ) : null}
+                            {q.invite.can_confirm ? (
+                              <>
+                                {" · "}
+                                <button
+                                  className="g"
+                                  onClick={() => cfm(q.id)}
+                                  style={{ padding: "2px 8px", fontSize: "12px" }}
+                                >
+                                  Confirmar envio via Bot
+                                </button>
+                              </>
                             ) : null}
                           </td>
                         </tr>
