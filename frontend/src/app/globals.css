@@ -1,0 +1,192 @@
+@import url("https://fonts.googleapis.com/css2?family=Barlow:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap");
+
+:root {
+  --bg: #0b1020;
+  --p: #141b33;
+  --b: #26315a;
+  --t: #e8ecff;
+  --m: #8a95c4;
+  --a: #0a9bff;
+  --w: #ffb020;
+  --ok: #2ecc8f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--t);
+  font: 15px/1.5 Barlow, system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+header {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--b);
+}
+
+h1 {
+  font-size: 20px;
+  margin: 0;
+  flex: 1;
+}
+
+.stat {
+  color: var(--m);
+}
+
+.stat b {
+  color: var(--ok);
+}
+
+form {
+  display: flex;
+  gap: 8px;
+  padding: 16px 24px;
+}
+
+textarea {
+  flex: 1;
+  background: var(--p);
+  border: 1px solid var(--b);
+  color: var(--t);
+  border-radius: 6px;
+  padding: 10px;
+  font: inherit;
+}
+
+button {
+  background: var(--a);
+  color: #001;
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.g {
+  background: var(--p);
+  color: var(--t);
+  border: 1px solid var(--b);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.cols {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  padding: 0 24px 24px;
+}
+
+@media (max-width: 800px) {
+  .cols {
+    grid-template-columns: 1fr;
+  }
+}
+
+.col {
+  background: var(--p);
+  border: 1px solid var(--b);
+  border-radius: 8px;
+  min-height: 300px;
+  padding: 10px;
+}
+
+.col h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: var(--m);
+}
+
+.card {
+  background: var(--bg);
+  border: 1px solid var(--b);
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.card:hover {
+  border-color: var(--a);
+}
+
+.card small {
+  color: var(--m);
+  display: block;
+}
+
+dialog {
+  background: var(--p);
+  color: var(--t);
+  border: 1px solid var(--b);
+  border-radius: 10px;
+  width: min(900px, 95vw);
+  max-height: 90vh;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+dialog:focus {
+  outline: none;
+}
+
+dialog::backdrop {
+  background: #000a;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 10px 0;
+  font-size: 13px;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--b);
+  padding: 6px;
+  text-align: left;
+}
+
+tr.best td {
+  color: var(--ok);
+}
+
+tr.bad td {
+  opacity: 0.5;
+}
+
+pre {
+  white-space: pre-wrap;
+  background: var(--bg);
+  padding: 10px;
+  border-radius: 6px;
+  border-left: 3px solid var(--a);
+  font-family: inherit;
+}
+
+a {
+  color: var(--a);
+}
+
+.est {
+  color: var(--w);
+}
+
+textarea.s {
+  width: 100%;
+  height: 50px;
+  margin-top: 4px;
+}

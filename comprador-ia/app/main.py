@@ -2,12 +2,21 @@ import asyncio, json
 from dotenv import load_dotenv
 load_dotenv()
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from . import db, agents, telegram
 
 app = FastAPI(title="Comprador IA")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.on_event("startup")
 async def _s(): asyncio.create_task(telegram.poll(agents.on_telegram))
