@@ -105,6 +105,7 @@ export default function Home() {
   const [stats, setStats] = useState<StatsData | null>(null);
   const [openId, setOpenId] = useState<number | null>(null);
   const [newText, setNewText] = useState("");
+  const [clarifyText, setClarifyText] = useState("");
   const [replyTexts, setReplyTexts] = useState<Record<number, string>>({});
   const dialogRef = useRef<HTMLDialogElement>(null);
 
@@ -230,6 +231,18 @@ export default function Home() {
     }
   };
 
+  const handleClarify = async (rid: number) => {
+    const trimmed = clarifyText.trim();
+    if (!trimmed) return;
+    try {
+      await api(`/api/requests/${rid}/clarify`, "POST", { text: trimmed });
+      setClarifyText("");
+      await loadData();
+    } catch (err) {
+      console.error("Erro ao enviar esclarecimento:", err);
+    }
+  };
+
   const openRequest = openId !== null ? data.find((x) => x.id === openId) : null;
   const rk = openRequest?.ranking || [];
 
@@ -259,7 +272,11 @@ export default function Home() {
 
       <div className="cols" id="cols">
         {S.map((c) => {
-          const colData = data.filter((r) => r.status === c);
+          const colData = data.filter((r) =>
+            c === "solicitado"
+              ? r.status === "solicitado" || r.status === "aguardando_esclarecimento"
+              : r.status === c
+          );
           return (
             <div className="col" key={c}>
               <h3>
@@ -277,12 +294,18 @@ export default function Home() {
                   <div className="card" key={r.id} onClick={() => show(r.id)}>
                     <b>
                       {r.item
-                        ? `${r.item.produto} · ${r.item.quantidade}${r.item.unidade || ""}`
+                        ? `${r.item.produto}${r.item.quantidade != null ? ` · ${r.item.quantidade}${r.item.unidade || ""}` : ""}`
                         : r.raw.slice(0, 50)}
                     </b>
-                    <small>
-                      {responded}/{totalQuotes} cotações
-                    </small>
+                    {r.status === "aguardando_esclarecimento" ? (
+                      <small style={{ color: "#f59e0b", fontWeight: "bold" }}>
+                        ⚠️ Precisa de detalhes
+                      </small>
+                    ) : (
+                      <small>
+                        {responded}/{totalQuotes} cotações
+                      </small>
+                    )}
                     <small>{lastLog}</small>
                   </div>
                 );
@@ -309,6 +332,45 @@ export default function Home() {
             </button>
             <h2>{openRequest.item?.produto || "Interpretando…"}</h2>
             <small>{openRequest.raw}</small>
+
+            {openRequest.status === "aguardando_esclarecimento" ? (
+              <div
+                style={{
+                  marginTop: "12px",
+                  marginBottom: "16px",
+                  padding: "12px",
+                  background: "rgba(245, 158, 11, 0.1)",
+                  border: "1px solid #f59e0b",
+                  borderRadius: "8px",
+                }}
+              >
+                <p style={{ margin: 0, fontWeight: "bold", color: "#f59e0b" }}>
+                  ⚠️ Especificação genérica identificada
+                </p>
+                <p style={{ fontSize: "13px", margin: "6px 0 10px 0" }}>
+                  Informe mais detalhes técnicos para prosseguir com a pesquisa (ex: dimensões, material, bitola, norma):
+                </p>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <input
+                    type="text"
+                    style={{
+                      flex: 1,
+                      padding: "8px",
+                      borderRadius: "4px",
+                      border: "1px solid #444",
+                      background: "#1e1e2f",
+                      color: "#fff",
+                    }}
+                    placeholder="Ex: flexível 2,5mm 750V para instalação residencial"
+                    value={clarifyText}
+                    onChange={(e) => setClarifyText(e.target.value)}
+                  />
+                  <button onClick={() => handleClarify(openRequest.id)}>
+                    Enviar e Continuar
+                  </button>
+                </div>
+              </div>
+            ) : null}
 
             <h3>Cotações</h3>
             <table>

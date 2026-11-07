@@ -19,10 +19,17 @@ def web_fallback(item):
     import re, html as H
     UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36"}
     qy = f"{item.get('produto')} {item.get('especificacoes') or ''} comprar preço"
-    try:
-        page = httpx.post("https://html.duckduckgo.com/html/", data={"q": qy}, headers=UA, timeout=20, follow_redirects=True).text
-    except Exception as e:
-        raise RuntimeError(f"Busca alternativa (DuckDuckGo) falhou: {e}")
+    page = None
+    for _tentativa in range(3):
+        try:
+            page = httpx.post("https://html.duckduckgo.com/html/", data={"q": qy}, headers=UA, timeout=20, follow_redirects=True).text
+            break
+        except Exception as e:
+            ultimo_erro = e
+            if _tentativa < 2:
+                import time; time.sleep(3)
+    if page is None:
+        raise RuntimeError(f"Busca alternativa (DuckDuckGo) falhou após 3 tentativas: {ultimo_erro}")
     urls, seen = [], set()
     for h in re.findall(r'class="result__a"[^>]*href="([^"]+)"', page):
         m = re.search(r"uddg=([^&]+)", h); u = urllib.parse.unquote(m.group(1)) if m else h
@@ -174,6 +181,15 @@ def _last(chat_id, status=None):
 
 async def buyer_cmd(chat_id, text):
     """Comandos do COMPRADOR no Telegram. Retorna True se tratou a mensagem."""
+    pend = _last(chat_id, "aguardando_esclarecimento")
+    if pend and not text.startswith("/"):
+        novo_raw = f"{pend['raw']} (especificação: {text.strip()})"
+        db.ex("UPDATE requests SET raw=?, status='solicitado' WHERE id=?", (novo_raw, pend["id"]))
+        db.log(pend["id"], f"Comprador esclareceu: {text.strip()}")
+        asyncio.create_task(run(pend["id"], novo_raw))
+        await telegram.send(chat_id, f"👍 Especificação recebida! Atualizei o pedido #{pend['id']} e os agentes estão pesquisando.")
+        return True
+
     cmd = text.split(" ", 1)[0].split("@")[0].lower()
     arg = text.split(" ", 1)[1].strip() if " " in text else ""
     if cmd in ("/ajuda", "/help") or (cmd == "/start" and not arg):
@@ -370,9 +386,33 @@ async def negotiate(rid):
             db.ex("UPDATE quotes SET status='enviada' WHERE id=?", (qt["id"],)); n += 1
     db.log(rid, f"Negociação: contraproposta enviada a {n} fornecedores"); return n
 
+# Produtos que exigem especificação técnica para cotação útil
+_GENERICOS = {
+    "cabo", "fio", "parafuso", "tubo", "cano", "chapa", "perfil", "barra",
+    "tinta", "verniz", "cimento", "areia", "prego", "rebite", "bucha",
+    "conector", "terminal", "fusivel", "disjuntor", "relé", "sensor",
+    "bomba", "motor", "válvula", "filtro", "mangueira", "correia",
+}
+
+def _is_ambiguo(item: dict) -> bool:
+    """Retorna True se produto for genérico demais e sem especificações."""
+    produto = (item.get("produto") or "").lower().strip()
+    sem_spec = not item.get("especificacoes")
+    return sem_spec and any(g == produto or produto.startswith(g + " ") for g in _GENERICOS)
+
 async def run(rid, raw):
     try:
         item = await asyncio.to_thread(interpret, rid, raw)
+        if _is_ambiguo(item):
+            db.ex("UPDATE requests SET status='aguardando_esclarecimento' WHERE id=?", (rid,))
+            db.log(rid, f"Interpretador: pedido ambíguo para '{item.get('produto')}' — aguardando esclarecimento do comprador")
+            chat = db.q("SELECT buyer_chat FROM requests WHERE id=?", (rid,))[0]["buyer_chat"]
+            if chat:
+                await telegram.send(chat,
+                    f"🤔 Seu pedido de *{item.get('produto')}* está genérico demais para eu buscar fornecedores úteis.\n\n"
+                    f"Por favor, complemente com mais detalhes (ex: bitola, amperagem, material, norma técnica).\n"
+                    f"Responda aqui com as especificações que vou continuar!")
+            return
         await asyncio.to_thread(search, rid, item)
         await dispatch(rid, item)
     except Exception as e:

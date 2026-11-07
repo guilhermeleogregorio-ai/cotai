@@ -39,6 +39,17 @@ async def create(b: New):
     asyncio.create_task(agents.run(rid, b.text)); return {"id": rid}
 @app.get("/api/requests")
 def lst(): return [full(r) for r in db.q("SELECT * FROM requests ORDER BY id DESC")]
+@app.post("/api/requests/{rid}/clarify")
+async def clarify(rid: int, b: Reply):
+    r = db.q("SELECT * FROM requests WHERE id=?", (rid,))
+    if not r: raise HTTPException(404, "Pedido não encontrado")
+    req = r[0]
+    novo_raw = f"{req['raw']} (especificação: {b.text.strip()})"
+    db.ex("UPDATE requests SET raw=?, status='solicitado' WHERE id=?", (novo_raw, rid))
+    db.log(rid, f"Comprador esclareceu via web: {b.text.strip()}")
+    asyncio.create_task(agents.run(rid, novo_raw))
+    return {"ok": True}
+
 @app.post("/api/requests/{rid}/compare")
 async def cmp(rid: int): await asyncio.to_thread(agents.compare, rid); return {"ok": True}
 @app.post("/api/requests/{rid}/decide")
