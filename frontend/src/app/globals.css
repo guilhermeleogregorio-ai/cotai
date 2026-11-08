@@ -814,6 +814,7 @@ button.g:hover {
   display: flex;
   align-items: center;
   justify-content: flex-start;
+  gap: 12px;
   margin-bottom: 14px;
 }
 
@@ -835,6 +836,123 @@ button.g:hover {
 .history-toggle-btn:hover {
   border-color: var(--accent-cyan);
   background: rgba(20, 36, 75, 0.9);
+}
+
+.history-toggle-btn.active {
+  border-color: var(--accent-cyan);
+  background: rgba(0, 240, 255, 0.12);
+  color: #fff;
+  box-shadow: 0 0 15px rgba(0, 240, 255, 0.18);
+}
+
+/* ==========================================================
+   REGISTRO DE FORNECEDORES
+   ========================================================== */
+.supplier-group {
+  background: rgba(11, 20, 44, 0.7);
+  border: 1px solid var(--b-border);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 22px;
+  transition: border-color 0.2s;
+}
+
+.supplier-group:hover {
+  border-color: rgba(0, 240, 255, 0.4);
+}
+
+.supplier-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(40, 65, 125, 0.5);
+}
+
+.supplier-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.supplier-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.supplier-link {
+  font-size: 12px;
+  color: var(--accent-cyan);
+  text-decoration: none;
+  background: rgba(0, 240, 255, 0.08);
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  padding: 2px 8px;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.supplier-link:hover {
+  background: rgba(0, 240, 255, 0.18);
+  border-color: var(--accent-cyan);
+  color: #fff;
+}
+
+.supplier-meta-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.supplier-meta-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(14, 25, 55, 0.85);
+  border: 1px solid rgba(40, 65, 125, 0.6);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--t-muted);
+}
+
+.supplier-meta-tag b {
+  color: #fff;
+}
+
+.supplier-meta-tag.tag-spend {
+  border-color: rgba(0, 255, 159, 0.4);
+  background: rgba(0, 255, 159, 0.08);
+  color: var(--accent-green, #00ff9f);
+}
+
+.supplier-meta-tag.tag-spend b {
+  color: var(--accent-green, #00ff9f);
+}
+
+.supplier-meta-tag.tag-savings {
+  border-color: rgba(0, 240, 255, 0.4);
+  background: rgba(0, 240, 255, 0.08);
+  color: var(--accent-cyan, #00f0ff);
+}
+
+.supplier-meta-tag.tag-savings b {
+  color: var(--accent-cyan, #00f0ff);
+}
+
+.supplier-quotes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .history-badge {

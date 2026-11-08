@@ -72,6 +72,57 @@ def undeliver(rid: int):
 def get_history():
     rows = db.q("SELECT * FROM requests WHERE status='entregue' ORDER BY COALESCE(delivered_at, created) DESC LIMIT 5")
     return [full(r) for r in rows]
+
+@app.get("/api/suppliers/history")
+def get_suppliers_history():
+    # Critérios:
+    # 1. Fornecedor utilizado em uma cotação.
+    # 2. O item/processo avançou até a última etapa do Kanban (decidido ou entregue).
+    # 3. Filtro: exibe apenas as cotações efetivamente aprovadas.
+    reqs = db.q("SELECT * FROM requests WHERE status IN ('decidido', 'entregue') AND chosen_quote IS NOT NULL ORDER BY COALESCE(delivered_at, created) DESC")
+    suppliers_dict = {}
+    for r in reqs:
+        r_full = full(r)
+        chosen_qid = r["chosen_quote"]
+        chosen_quote = next((q for q in r_full["quotes"] if q["id"] == chosen_qid), None)
+        if not chosen_quote:
+            continue
+        supp_name = chosen_quote["supplier"]
+        if supp_name not in suppliers_dict:
+            supp_db = db.q("SELECT * FROM suppliers WHERE name=?", (supp_name,))
+            city = supp_db[0]["city"] if supp_db and supp_db[0]["city"] else chosen_quote.get("city")
+            suppliers_dict[supp_name] = {
+                "name": supp_name,
+                "city": city,
+                "contact": chosen_quote.get("contact"),
+                "url": chosen_quote.get("url"),
+                "total_approved_quotes": 0,
+                "total_spend": 0.0,
+                "total_savings": 0.0,
+                "approved_quotes": []
+            }
+
+        rk_item = next((k for k in (r_full["ranking"] or []) if k["id"] == chosen_qid), None)
+        qtd = float((r_full["item"] or {}).get("quantidade") or 1)
+        unit_p = chosen_quote.get("unit_price") or 0.0
+        freight = chosen_quote.get("freight") or 0.0
+        prod_total = chosen_quote.get("product_total")
+
+        if rk_item and rk_item.get("total") is not None:
+            total = rk_item["total"]
+        elif prod_total is not None:
+            total = prod_total + freight
+        else:
+            total = unit_p * qtd + freight
+
+        savings = float(r_full.get("savings") or 0.0)
+
+        suppliers_dict[supp_name]["total_approved_quotes"] += 1
+        suppliers_dict[supp_name]["total_spend"] += round(total, 2)
+        suppliers_dict[supp_name]["total_savings"] += round(savings, 2)
+        suppliers_dict[supp_name]["approved_quotes"].append(r_full)
+
+    return list(suppliers_dict.values())
 @app.post("/api/requests/{rid}/negotiate")
 async def neg(rid: int): return {"enviadas": await agents.negotiate(rid)}
 @app.post("/api/quotes/{qid}/reply")  # fallback: colar a resposta do fornecedor recebida em outro canal

@@ -81,6 +81,17 @@ interface StatsData {
   entregues?: number;
 }
 
+interface SupplierHistoryItem {
+  name: string;
+  city?: string | null;
+  contact?: string | null;
+  url?: string | null;
+  total_approved_quotes: number;
+  total_spend: number;
+  total_savings: number;
+  approved_quotes: RequestModel[];
+}
+
 const S = ["solicitado", "cotando", "comparando", "decidido"] as const;
 const N: Record<string, string> = {
   solicitado: "Solicitado",
@@ -161,7 +172,8 @@ function formatTime(dateStr?: string | null): string {
 export default function Home() {
   const [data, setData] = useState<RequestModel[]>([]);
   const [history, setHistory] = useState<RequestModel[]>([]);
-  const [showHistory, setShowHistory] = useState(true);
+  const [suppliersHistory, setSuppliersHistory] = useState<SupplierHistoryItem[]>([]);
+  const [activeTab, setActiveTab] = useState<"compras" | "fornecedores" | null>("compras");
   const [stats, setStats] = useState<StatsData | null>(null);
   const [openId, setOpenId] = useState<number | null>(null);
   const [newText, setNewText] = useState("");
@@ -172,14 +184,16 @@ export default function Home() {
 
   const loadData = useCallback(async () => {
     try {
-      const [reqs, st, hist] = await Promise.all([
+      const [reqs, st, hist, suppHist] = await Promise.all([
         api("/api/requests"),
         api("/api/stats"),
         api("/api/history"),
+        api("/api/suppliers/history"),
       ]);
       setData(Array.isArray(reqs) ? reqs : []);
       setStats(st);
       setHistory(Array.isArray(hist) ? hist : []);
+      setSuppliersHistory(Array.isArray(suppHist) ? suppHist : []);
     } catch (err) {
       console.error("Erro ao carregar dados:", err);
     }
@@ -190,15 +204,17 @@ export default function Home() {
 
     async function initialFetch() {
       try {
-        const [reqs, st, hist] = await Promise.all([
+        const [reqs, st, hist, suppHist] = await Promise.all([
           api("/api/requests"),
           api("/api/stats"),
           api("/api/history"),
+          api("/api/suppliers/history"),
         ]);
         if (!ignore) {
           setData(Array.isArray(reqs) ? reqs : []);
           setStats(st);
           setHistory(Array.isArray(hist) ? hist : []);
+          setSuppliersHistory(Array.isArray(suppHist) ? suppHist : []);
         }
       } catch (err) {
         console.error("Erro ao carregar dados:", err);
@@ -333,9 +349,17 @@ export default function Home() {
 
   const openRequest =
     openId !== null
-      ? data.find((x) => x.id === openId) || history.find((x) => x.id === openId)
+      ? data.find((x) => x.id === openId) ||
+        history.find((x) => x.id === openId) ||
+        suppliersHistory
+          .flatMap((s) => s.approved_quotes)
+          .find((x) => x.id === openId)
       : null;
   const rk = openRequest?.ranking || [];
+
+  const handleToggleTab = (tab: "compras" | "fornecedores") => {
+    setActiveTab((prev) => (prev === tab ? null : tab));
+  };
 
   // Assegurar exatamente até 5 cotações no histórico
   const last5History = history.slice(0, 5);
@@ -352,6 +376,213 @@ export default function Home() {
     }
     grp.items.push(item);
   }
+
+  const renderQuotationCard = (r: RequestModel, isInsideSupplierView = false) => {
+    const chosenQ = r.quotes?.find((q) => q.id === r.chosen_quote);
+    const chosenRk = r.ranking?.find((x) => x.id === r.chosen_quote);
+    const local = getLocation(r.item);
+    const qtd = getQuantity(r.item);
+    const totalPago =
+      chosenRk?.total ??
+      (chosenQ?.product_total != null
+        ? chosenQ.product_total + (chosenQ.freight || 0)
+        : chosenQ?.unit_price
+        ? chosenQ.unit_price * Number(r.item?.quantidade || 1) +
+          (chosenQ.freight || 0)
+        : null);
+
+    return (
+      <div className="history-card" key={r.id}>
+        <div className="history-card-top">
+          <div>
+            <h4 className="history-card-title">
+              {r.item?.produto || r.raw}
+            </h4>
+            <div className="history-badges">
+              <span className="history-tag">
+                Qtd: <b>{qtd}</b>
+              </span>
+              {local ? (
+                <span className="history-tag tag-loc">
+                  Destino: <b>{local}</b>
+                </span>
+              ) : null}
+              <span className="history-tag tag-ok">
+                {r.status === "entregue" ? "Entregue" : "Aprovado"}
+              </span>
+              {r.delivered_at || r.created ? (
+                <span className="history-tag">
+                  {formatDateHeader(r.delivered_at || r.created)} · {formatTime(r.delivered_at || r.created)}
+                </span>
+              ) : null}
+            </div>
+          </div>
+        </div>
+
+        {/* Detalhe do Fornecedor Escolhido / Comprado */}
+        {chosenQ ? (
+          <div className="history-winner-box">
+            <div className="history-winner-info">
+              <div>
+                <div className="history-winner-title">
+                  Fornecedor Aprovado:
+                </div>
+                <div className="history-winner-name">
+                  {chosenQ.supplier}
+                </div>
+              </div>
+              <div className="history-winner-totals">
+                <div>
+                  <small style={{ color: "var(--m)" }}>
+                    Unitário:{" "}
+                  </small>
+                  <b>{brl(chosenQ.unit_price)}</b>
+                </div>
+                <div>
+                  <small style={{ color: "var(--m)" }}>
+                    Frete:{" "}
+                  </small>
+                  <b>{brl(chosenQ.freight)}</b>
+                </div>
+                <div className="history-winner-price">
+                  <small style={{ color: "var(--m)" }}>
+                    Total:{" "}
+                  </small>
+                  <b style={{ color: "var(--ok)" }}>
+                    {brl(totalPago)}
+                  </b>
+                </div>
+              </div>
+            </div>
+            {r.savings != null && r.savings > 0 ? (
+              <div className="history-winner-savings">
+                Economia obtida: <b>{brl(r.savings)}</b>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* Produtos Cotados nesta cotação */}
+        {r.quotes && r.quotes.length > 0 ? (() => {
+          // No modo fornecedor: exibe apenas a cotação aprovada deste fornecedor
+          // No modo compras: exibe todas as cotações da compra
+          const quotesToShow = isInsideSupplierView
+            ? r.quotes.filter((q) => q.id === r.chosen_quote)
+            : r.quotes;
+
+          if (quotesToShow.length === 0) return null;
+
+          return (
+          <div className="history-quotes-list">
+            <div className="history-quotes-title">
+              {isInsideSupplierView
+                ? "Cotação Aprovada:"
+                : `Produtos Cotados (${r.quotes.length} cotações):`}
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Fornecedor</th>
+                  <th>Unit.</th>
+                  <th>Frete</th>
+                  <th>Prazo</th>
+                  <th>Total</th>
+                  <th>Resultado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {quotesToShow.map((q) => {
+                  const k = r.ranking?.find((x) => x.id === q.id);
+                  const isWinner = q.id === r.chosen_quote;
+                  return (
+                    <tr
+                      key={q.id}
+                      className={isWinner ? "best" : ""}
+                    >
+                      <td>
+                        <a
+                          href={q.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {q.supplier}
+                        </a>
+                        {Boolean(q.source?.includes('[Simulado]') || q.url?.includes('simulacao')) ? (
+                          <span className="badge-simulado" title="Cotação simulada">
+                            <span className="badge-simulado-dot" />
+                            Simulado
+                          </span>
+                        ) : (
+                          <span className="badge-real" title="Fornecedor real">
+                            <span className="badge-real-dot" />
+                            Web
+                          </span>
+                        )}
+                      </td>
+                      <td>{brl(q.unit_price)}</td>
+                      <td>
+                        {brl(q.freight)}
+                        {q.freight_estimated ? (
+                          <span className="est"> est.</span>
+                        ) : null}
+                      </td>
+                      <td>
+                        {q.lead_days != null
+                          ? `${q.lead_days}d`
+                          : "—"}
+                      </td>
+                      <td>
+                        {k?.total != null ? brl(k.total) : "—"}
+                      </td>
+                      <td>
+                        {isWinner ? (
+                          <span className="badge-winner">
+                            Aprovado
+                          </span>
+                        ) : (
+                          <span className="badge-other">
+                            Cotado
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          );
+        })() : null}
+
+        {/* Ações da cotação no histórico */}
+        <div className="history-card-actions">
+          <button
+            type="button"
+            className="g"
+            onClick={() => show(r.id)}
+            style={{ fontSize: "12px", padding: "4px 10px" }}
+          >
+            Ver Detalhes
+          </button>
+          {!isInsideSupplierView && r.status === "entregue" ? (
+            <button
+              type="button"
+              className="g"
+              onClick={() => handleUndeliver(r.id)}
+              style={{
+                fontSize: "12px",
+                padding: "4px 10px",
+                color: "var(--w)",
+              }}
+              title="Mover de volta para a coluna Decidido no Kanban"
+            >
+              Desfazer Entrega
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <>
@@ -553,29 +784,42 @@ export default function Home() {
         })}
       </div>
 
-      {/* Seção de Histórico de Compras - Botão na parte inferior à esquerda abaixo do Kanban */}
+      {/* Seção Inferior: Registro de Compras e Registro de Fornecedores */}
       <div className="history-section" id="historico">
         <div className="history-toolbar">
           <button
             type="button"
-            className={`history-toggle-btn ${showHistory ? "active" : ""}`}
-            onClick={() => setShowHistory((prev) => !prev)}
-            title="Exibir ou recolher o Histórico de Compras"
+            className={`history-toggle-btn ${activeTab === "compras" ? "active" : ""}`}
+            onClick={() => handleToggleTab("compras")}
+            title="Exibir ou recolher o Registro de Compras"
           >
-            
-            <span>Histórico de Compras</span>
+            <span>Registro de Compras</span>
             <span className="history-badge">{last5History.length} / 5</span>
             <span className="history-arrow">
-              {showHistory ? "▲ Recolher" : "▼ Expandir"}
+              {activeTab === "compras" ? "▲ Recolher" : "▼ Expandir"}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            className={`history-toggle-btn ${activeTab === "fornecedores" ? "active" : ""}`}
+            onClick={() => handleToggleTab("fornecedores")}
+            title="Exibir ou recolher o Registro de Fornecedores"
+          >
+            <span>Registro de Fornecedores</span>
+            <span className="history-badge">{suppliersHistory.length}</span>
+            <span className="history-arrow">
+              {activeTab === "fornecedores" ? "▲ Recolher" : "▼ Expandir"}
             </span>
           </button>
         </div>
 
-        {showHistory ? (
+        {/* Painel: Registro de Compras */}
+        {activeTab === "compras" ? (
           <div className="history-content">
             <div className="history-header">
               <div>
-                <h2>Histórico de Compras</h2>
+                <h2>Registro de Compras</h2>
                 <p className="history-subtitle">
                   Exibindo as últimas 5 cotações entregues · Produtos comprados, quantidades, locais e cotações separadas por data
                 </p>
@@ -584,7 +828,6 @@ export default function Home() {
 
             {last5History.length === 0 ? (
               <div className="history-empty">
-                
                 <p>Nenhuma compra entregue registrada no histórico ainda.</p>
                 <small style={{ color: "var(--m)" }}>
                   Finalize uma cotação e clique no botão <b>&quot;Entregue&quot;</b> na coluna <b>Decidido</b> do Kanban acima para arquivá-la aqui (armazenando até as últimas 5 cotações).
@@ -594,7 +837,6 @@ export default function Home() {
               groupedHistory.map((grp) => (
                 <div className="history-date-group" key={grp.dateKey}>
                   <div className="history-date-header">
-                    
                     <span>
                       {formatDateHeader(
                         grp.items[0].delivered_at || grp.items[0].created
@@ -609,198 +851,81 @@ export default function Home() {
                     </span>
                   </div>
 
-                  {grp.items.map((r) => {
-                    const chosenQ = r.quotes?.find((q) => q.id === r.chosen_quote);
-                    const chosenRk = r.ranking?.find((x) => x.id === r.chosen_quote);
-                    const local = getLocation(r.item);
-                    const qtd = getQuantity(r.item);
-                    const totalPago =
-                      chosenRk?.total ??
-                      (chosenQ?.product_total != null
-                        ? chosenQ.product_total + (chosenQ.freight || 0)
-                        : chosenQ?.unit_price
-                        ? chosenQ.unit_price * Number(r.item?.quantidade || 1) +
-                          (chosenQ.freight || 0)
-                        : null);
+                  {grp.items.map((r) => renderQuotationCard(r, false))}
+                </div>
+              ))
+            )}
+          </div>
+        ) : null}
 
-                    return (
-                      <div className="history-card" key={r.id}>
-                        <div className="history-card-top">
-                          <div>
-                            <h4 className="history-card-title">
-                              {r.item?.produto || r.raw}
-                            </h4>
-                            <div className="history-badges">
-                              <span className="history-tag">
-                                Qtd: <b>{qtd}</b>
-                              </span>
-                              {local ? (
-                                <span className="history-tag tag-loc">
-                                  Destino: <b>{local}</b>
-                                </span>
-                              ) : null}
-                              <span className="history-tag tag-ok">
-                                Entregue
-                              </span>
-                              {r.delivered_at ? (
-                                <span className="history-tag">
-                                  {formatTime(r.delivered_at)}
-                                </span>
-                              ) : null}
-                            </div>
-                          </div>
-                        </div>
+        {/* Painel: Registro e Histórico de Fornecedores */}
+        {activeTab === "fornecedores" ? (
+          <div className="history-content">
+            <div className="history-header">
+              <div>
+                <h2>Registro e Histórico de Fornecedores</h2>
+                <p className="history-subtitle">
+                  Fornecedores cujas cotações foram efetivamente aprovadas no processo final do Kanban
+                </p>
+              </div>
+            </div>
 
-                        {/* Detalhe do Fornecedor Escolhido / Comprado */}
-                        {chosenQ ? (
-                          <div className="history-winner-box">
-                            <div className="history-winner-info">
-                              <div>
-                                <div className="history-winner-title">
-                                  Fornecedor Comprado:
-                                </div>
-                                <div className="history-winner-name">
-                                  {chosenQ.supplier}
-                                </div>
-                              </div>
-                              <div className="history-winner-totals">
-                                <div>
-                                  <small style={{ color: "var(--m)" }}>
-                                    Unitário:{" "}
-                                  </small>
-                                  <b>{brl(chosenQ.unit_price)}</b>
-                                </div>
-                                <div>
-                                  <small style={{ color: "var(--m)" }}>
-                                    Frete:{" "}
-                                  </small>
-                                  <b>{brl(chosenQ.freight)}</b>
-                                </div>
-                                <div className="history-winner-price">
-                                  <small style={{ color: "var(--m)" }}>
-                                    Total:{" "}
-                                  </small>
-                                  <b style={{ color: "var(--ok)" }}>
-                                    {brl(totalPago)}
-                                  </b>
-                                </div>
-                              </div>
-                            </div>
-                            {r.savings != null && r.savings > 0 ? (
-                              <div className="history-winner-savings">
-                                Economia obtida: <b>{brl(r.savings)}</b>
-                              </div>
-                            ) : null}
-                          </div>
-                        ) : null}
+            {suppliersHistory.length === 0 ? (
+              <div className="history-empty">
+                <p>Nenhum fornecedor registrado no histórico ainda.</p>
+                <small style={{ color: "var(--m)" }}>
+                  O sistema registra automaticamente um fornecedor nesta tela quando ele atende a todos os critérios: é utilizado em uma cotação e o processo avança até a etapa final (conclusão/aprovado) no Kanban.
+                </small>
+              </div>
+            ) : (
+              suppliersHistory.map((supp) => (
+                <div className="supplier-group" key={supp.name}>
+                  <div className="supplier-header">
+                    <div className="supplier-title-wrap">
+                      <h3 className="supplier-title">🏢 {supp.name}</h3>
+                      {supp.url ? (
+                        <a
+                          href={supp.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="supplier-link"
+                          title="Visitar página do fornecedor"
+                        >
+                          Visitar Site ↗
+                        </a>
+                      ) : null}
+                    </div>
 
-                        {/* Produtos Cotados nesta cotação */}
-                        {r.quotes && r.quotes.length > 0 ? (
-                          <div className="history-quotes-list">
-                            <div className="history-quotes-title">
-                              Produtos Cotados ({r.quotes.length} cotações):
-                            </div>
-                            <table>
-                              <thead>
-                                <tr>
-                                  <th>Fornecedor</th>
-                                  <th>Unit.</th>
-                                  <th>Frete</th>
-                                  <th>Prazo</th>
-                                  <th>Total</th>
-                                  <th>Resultado</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {r.quotes.map((q) => {
-                                  const k = r.ranking?.find((x) => x.id === q.id);
-                                  const isWinner = q.id === r.chosen_quote;
-                                  return (
-                                    <tr
-                                      key={q.id}
-                                      className={isWinner ? "best" : ""}
-                                    >
-                                      <td>
-                                        <a
-                                          href={q.url}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                        >
-                                          {q.supplier}
-                                        </a>
-                                        {Boolean(q.source?.includes('[Simulado]') || q.url?.includes('simulacao')) ? (
-                                          <span className="badge-simulado" title="Cotação simulada">
-                                            <span className="badge-simulado-dot" />
-                                            Simulado
-                                          </span>
-                                        ) : (
-                                          <span className="badge-real" title="Fornecedor real">
-                                            <span className="badge-real-dot" />
-                                            Web
-                                          </span>
-                                        )}
-                                      </td>
-                                      <td>{brl(q.unit_price)}</td>
-                                      <td>
-                                        {brl(q.freight)}
-                                        {q.freight_estimated ? (
-                                          <span className="est"> est.</span>
-                                        ) : null}
-                                      </td>
-                                      <td>
-                                        {q.lead_days != null
-                                          ? `${q.lead_days}d`
-                                          : "—"}
-                                      </td>
-                                      <td>
-                                        {k?.total != null ? brl(k.total) : "—"}
-                                      </td>
-                                      <td>
-                                        {isWinner ? (
-                                          <span className="badge-winner">
-                                            Comprado
-                                          </span>
-                                        ) : (
-                                          <span className="badge-other">
-                                            Cotado
-                                          </span>
-                                        )}
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-                        ) : null}
+                    <div className="supplier-meta-badges">
+                      {supp.city ? (
+                        <span className="supplier-meta-tag">
+                          📍 Cidade: <b>{supp.city}</b>
+                        </span>
+                      ) : null}
+                      {supp.contact ? (
+                        <span className="supplier-meta-tag">
+                          📞 Contato: <b>{supp.contact}</b>
+                        </span>
+                      ) : null}
+                      <span className="supplier-meta-tag">
+                        🏷️ Cotações Aprovadas: <b>{supp.total_approved_quotes}</b>
+                      </span>
+                      <span className="supplier-meta-tag tag-spend">
+                        💰 Total Fornecido: <b>{brl(supp.total_spend)}</b>
+                      </span>
+                      {supp.total_savings > 0 ? (
+                        <span className="supplier-meta-tag tag-savings">
+                          📈 Economia Total Gerada: <b>{brl(supp.total_savings)}</b>
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
 
-                        {/* Ações da cotação no histórico */}
-                        <div className="history-card-actions">
-                          <button
-                            type="button"
-                            className="g"
-                            onClick={() => show(r.id)}
-                            style={{ fontSize: "12px", padding: "4px 10px" }}
-                          >
-                            Ver Detalhes
-                          </button>
-                          <button
-                            type="button"
-                            className="g"
-                            onClick={() => handleUndeliver(r.id)}
-                            style={{
-                              fontSize: "12px",
-                              padding: "4px 10px",
-                              color: "var(--w)",
-                            }}
-                            title="Mover de volta para a coluna Decidido no Kanban"
-                          >
-                            Desfazer Entrega
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                  <div className="supplier-quotes-list">
+                    {supp.approved_quotes.map((quoteReq) =>
+                      renderQuotationCard(quoteReq, true)
+                    )}
+                  </div>
                 </div>
               ))
             )}
