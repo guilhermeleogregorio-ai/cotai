@@ -484,3 +484,69 @@ textarea.s {
   color: var(--m);
   font-size: 11px;
 }
+
+
+/* Badges Cyberpunk / AI para Fornecedores */
+.badge-simulado {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  border-radius: 4px;
+  background: rgba(14, 165, 233, 0.12);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.2);
+  vertical-align: middle;
+}
+
+.badge-simulado-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 6px #38bdf8;
+  animation: pulse-cyan 2s infinite;
+}
+
+.badge-real {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  border-radius: 4px;
+  background: rgba(46, 204, 143, 0.12);
+  color: #2ecc8f;
+  border: 1px solid rgba(46, 204, 143, 0.45);
+  box-shadow: 0 0 8px rgba(46, 204, 143, 0.2);
+  vertical-align: middle;
+}
+
+.badge-real-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #2ecc8f;
+  box-shadow: 0 0 6px #2ecc8f;
+}
+
+@keyframes pulse-cyan {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.85);
+  }
+}

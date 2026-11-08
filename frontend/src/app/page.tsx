@@ -616,6 +616,17 @@ export default function Home() {
                                         >
                                           {q.supplier}
                                         </a>
+                                        {Boolean(q.source?.includes('[Simulado]') || q.url?.includes('simulacao')) ? (
+                                          <span className="badge-simulado" title="Cotação simulada">
+                                            <span className="badge-simulado-dot" />
+                                            Simulado
+                                          </span>
+                                        ) : (
+                                          <span className="badge-real" title="Fornecedor real">
+                                            <span className="badge-real-dot" />
+                                            Web
+                                          </span>
+                                        )}
                                       </td>
                                       <td>{brl(q.unit_price)}</td>
                                       <td>
@@ -778,6 +789,17 @@ export default function Home() {
                           >
                             {q.supplier}
                           </a>
+                          {Boolean(q.source?.includes('[Simulado]') || q.url?.includes('simulacao')) ? (
+                            <span className="badge-simulado" title="Cotação simulada coerente conforme Requisito 03 do Edital">
+                              <span className="badge-simulado-dot" />
+                              Simulado
+                            </span>
+                          ) : (
+                            <span className="badge-real" title="Fornecedor real validado na web">
+                              <span className="badge-real-dot" />
+                              Web Real
+                            </span>
+                          )}
                         </td>
                         <td>{brl(q.unit_price)}</td>
                         <td>
