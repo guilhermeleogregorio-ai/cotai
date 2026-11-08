@@ -30,6 +30,10 @@ interface Quote {
   raw_reply?: string | null;
   source?: string | null;
   invite?: QuoteInvite | null;
+  product_total?: number | null;
+  price_type?: string | null;
+  quoted_unit?: string | null;
+  clarification_needed?: string | null;
 }
 
 interface RankingItem {
@@ -612,7 +616,9 @@ export default function Home() {
                     const qtd = getQuantity(r.item);
                     const totalPago =
                       chosenRk?.total ??
-                      (chosenQ?.unit_price
+                      (chosenQ?.product_total != null
+                        ? chosenQ.product_total + (chosenQ.freight || 0)
+                        : chosenQ?.unit_price
                         ? chosenQ.unit_price * Number(r.item?.quantidade || 1) +
                           (chosenQ.freight || 0)
                         : null);
@@ -963,7 +969,7 @@ export default function Home() {
                           </td>
                         </tr>
                       ) : null}
-                      {["enviada", "aguardando_contato", "respondida_parcial"].includes(
+                      {["enviada", "aguardando_contato", "respondida_parcial", "aguardando_esclarecimento"].includes(
                         q.status
                       ) ? (
                         <tr>

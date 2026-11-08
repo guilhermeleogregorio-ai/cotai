@@ -1,8 +1,321 @@
 """Agentes: Interpretador -> Pesquisador -> (Cotador via Telegram) -> Parser -> Logística -> Comparador."""
-import os, json, math, secrets, asyncio, urllib.parse, httpx
+import os, json, math, secrets, asyncio, urllib.parse, httpx, re
 from . import db, llm, telegram
 
 BOT = os.getenv("TELEGRAM_BOT_USERNAME", "")
+NUM = r"(?:\d{1,3}(?:\.\d{3})*(?:,\d+)?|\d+(?:[\.,]\d+)?)"
+
+def normalize_unit(unit: str | None) -> str:
+    """Padroniza unidades de medida para evitar inconsistências de interpretação."""
+    if not unit:
+        return "unidades"
+    u = unit.strip().lower()
+    if u in ("m", "metro", "metros", "mt", "mts"):
+        return "metros"
+    if u in ("kg", "quilo", "quilos", "kilo", "kilos", "quilograma", "quilogramas"):
+        return "kg"
+    if u in ("l", "lt", "lts", "litro", "litros"):
+        return "litros"
+    if u in ("un", "und", "unidade", "unidades", "peça", "peças", "peca", "pecas", "pc", "pcs", "item", "itens"):
+        return "unidades"
+    if u in ("rolo", "rolos", "bobina", "bobinas"):
+        return "rolos"
+    if u in ("cx", "cxs", "caixa", "caixas"):
+        return "caixas"
+    if u in ("pct", "pcts", "pacote", "pacotes"):
+        return "pacotes"
+    return u
+
+def are_units_compatible(u1: str | None, u2: str | None) -> bool:
+    """Verifica se duas unidades referem-se à mesma grandeza de medida."""
+    if not u1 or not u2:
+        return True
+    return normalize_unit(u1) == normalize_unit(u2)
+
+def parse_number_brl(s: str | None) -> float | None:
+    """Converte representações numéricas comuns em pt-BR (ex: 1.500,50 / 1.500 / 1,875 / 1500) em float."""
+    if s is None:
+        return None
+    try:
+        s = str(s).strip().replace("R$", "").replace("reais", "").strip()
+        if "." in s and "," in s:
+            s = s.replace(".", "").replace(",", ".")
+        elif "," in s:
+            s = s.replace(",", ".")
+        elif "." in s:
+            parts = s.split(".")
+            if len(parts) == 2 and len(parts[1]) == 3 and int(parts[0]) > 0:
+                s = parts[0] + parts[1]
+        return float(s)
+    except Exception:
+        return None
+
+def deterministic_parse_reply(full_text: str, item: dict) -> dict:
+    """Extrai informações estruturadas da resposta do fornecedor através de padrões textuais.
+    Identifica de forma estrita se o preço é unitário, total ou ambíguo, impedindo
+    que o sistema faça suposições indevidas sobre unidade monetária não qualificada."""
+    text = full_text.strip()
+    req_qty = float(item.get("quantidade") or 1)
+    req_unit = normalize_unit(item.get("unidade"))
+
+    # 1. Frete
+    frete = None
+    if re.search(r"\bfrete\s+(?:gr[áa]tis|zero|gratuito|incluso|sem\s+custo)\b", text, re.I):
+        frete = 0.0
+    else:
+        # "100 de custo de transporte", "100 de frete", "100 de transporte"
+        m_fr = re.search(f"({NUM})" + r"\s*(?:reais\s*)?(?:de\s+)(?:frete|custo\s+de\s+transporte|transporte)", text, re.I)
+        if not m_fr:
+            # "frete: 100", "frete de 100", "custo de transporte: 100", "transporte: 100"
+            m_fr = re.search(r"(?:frete|custo\s+de\s+transporte|taxa\s+de\s+entrega|valor\s+do\s+transporte|transporte)\s*(?:de|:)?\s*(?:R?\$?\s*)?" + f"({NUM})", text, re.I)
+        if m_fr:
+            frete = parse_number_brl(m_fr.group(1))
+
+    # 2. Prazo
+    prazo = None
+    m_pz = re.search(r"(?:prazo(?:\s+de\s+entrega)?|entrega(?:\s+em)?)\s*(?:de|:)?\s*(\d+)\s*dias?", text, re.I)
+    if not m_pz:
+        m_pz = re.search(r"(\d+)\s*dias?\b", text, re.I)
+    if m_pz:
+        try: prazo = int(m_pz.group(1))
+        except Exception: pass
+
+    # 3. Formato bare numbers sem palavras-chave: ex: "1500 100 5 dias" ou "1500\n100\n5 dias"
+    bare_price = None
+    m_bare = re.search(r"(?:^|[\r\n])\s*(?:R?\$?\s*)?(" + NUM + r")[\s,]+(?:R?\$?\s*)?(" + NUM + r")[\s,]+(\d+)\s*dias?", text, re.I)
+    if m_bare:
+        bare_price = parse_number_brl(m_bare.group(1))
+        if frete is None:
+            frete = parse_number_brl(m_bare.group(2))
+        if prazo is None:
+            try: prazo = int(m_bare.group(3))
+            except Exception: pass
+
+    # 4. Pacotes / unidades diferentes com conversão (ex: rolo de 100m, caixa com 50 unidades)
+    conversao = None
+    unidade_cotada = None
+    m_pkg = re.search(r"(?:rolo|bobina)s?\s+de\s+(\d+(?:[\.,]\d+)?)\s*(m|metros?)", text, re.I)
+    if m_pkg:
+        unidade_cotada = "rolos"
+        conversao = {"multiplicador": parse_number_brl(m_pkg.group(1)), "unidade_base": "metros"}
+    else:
+        m_cx = re.search(r"(?:caixa|pacote)s?\s+(?:com|de)\s+(\d+(?:[\.,]\d+)?)\s*([a-zA-Zá-úÁ-Ú]+)", text, re.I)
+        if m_cx:
+            unidade_cotada = "caixas"
+            conversao = {"multiplicador": parse_number_brl(m_cx.group(1)), "unidade_base": normalize_unit(m_cx.group(2))}
+
+    # 5. Preço e classificação (total vs unitario vs ambiguo)
+    tipo_preco = None
+    valor_produto = None
+    precisa_esclarecer = False
+    motivo_esclarecimento = None
+
+    padroes_total = [
+        r"(?:(?:preço|valor)\s+total|total\s*(?:de|do\s+cabo|do\s+pedido)?)\s*[:=]?\s*(?:R?\$?\s*)?(" + NUM + r")\b",
+        r"(?:R?\$?\s*(" + NUM + r")\s*(?:pel[oa]s?\s+(?:\d+\s*(?:m|metros?|un|unidades?|peças?|kg)?\s*)?(?:cabo|produto|lote|tudo|pedido|mercad(?:oria)?)|no\s+total|total))\b",
+        r"(?:faço|fecho|fica|deixo)\s+(?:em|por)?\s*(?:R?\$?\s*)?(" + NUM + r")\s*(?:pel[oa]s?\s+(?:\d+\s*(?:m|metros?|un|unidades?|peças?|kg)?\s*)?(?:cabo|produto|lote|tudo)|no\s+total|tudo)\b",
+        r"R?\$?\s*(" + NUM + r")\s*pel[oa]s?\s+\d+\s*(?:m|metros?|un|unidades?|peças?|kg)\b"
+    ]
+
+    padroes_unitario = [
+        r"(?:(?:preço|valor)\s+unit[áa]rio|unit[áa]rio)\s*[:=]?\s*(?:R?\$?\s*)?(" + NUM + r")\b",
+        r"(?:R?\$?\s*)?(" + NUM + r")\s*(?:por|cada|/)\s*(metro|m\b|unidade|un\b|peça|pc\b|kg|quilo|litro|l\b|rolo|bobina|caixa|pacote)\b",
+        r"(?:cada|por)\s*(metro|m\b|unidade|un\b|peça|pc\b|kg|quilo|litro|l\b|rolo|bobina|caixa|pacote)\s*(?:sai|custa|fica|por)?\s*[:=]?\s*(?:R?\$?\s*)?(" + NUM + r")\b",
+        r"(?:R?\$?\s*)?(" + NUM + r")\s*(?:a\s+unidade|o\s+metro|o\s+quilo|o\s+litro|o\s+rolo)\b"
+    ]
+
+    for p in padroes_total:
+        m = re.search(p, text, re.I)
+        if m:
+            tipo_preco = "total"
+            valor_produto = parse_number_brl(m.group(1))
+            break
+
+    if not tipo_preco:
+        for p in padroes_unitario:
+            m = re.search(p, text, re.I)
+            if m:
+                tipo_preco = "unitario"
+                if m.lastindex >= 2:
+                    if p.startswith(r"(?:cada|por)"):
+                        unidade_cotada = normalize_unit(m.group(1))
+                        valor_produto = parse_number_brl(m.group(2))
+                    else:
+                        valor_produto = parse_number_brl(m.group(1))
+                        unidade_cotada = normalize_unit(m.group(2))
+                else:
+                    valor_produto = parse_number_brl(m.group(1))
+                break
+
+    # Se ainda não detectou valor_produto, verificar bare_price ou candidatos
+    if valor_produto is None and bare_price is not None:
+        valor_produto = bare_price
+
+    if valor_produto is None:
+        candidatos = []
+        for token in re.findall(r"R?\$?\s*(" + NUM + r")", text):
+            val = parse_number_brl(token)
+            if val is not None and val != frete and val != prazo:
+                candidatos.append(val)
+        if candidatos:
+            valor_produto = candidatos[0]
+
+    # Verificar se há confirmação de total vs unitário em mensagens subsequentes
+    # Ex: "É o preço total pelos 800 metros" ou "É unitário"
+    if valor_produto is not None:
+        if re.search(r"\b(?:[eé]\s+(?:o\s+)?(?:preço\s+|valor\s+)?total|preço\s+total\s+pelos\s+\d+|[eé]\s+total\b|pelo\s+lote|pelos?\s+\d+\s*(?:m|metros?|un|unidades?|peças?|kg))\b", text, re.I):
+            tipo_preco = "total"
+            precisa_esclarecer = False
+        elif re.search(r"\b(?:[eé]\s+(?:o\s+)?(?:preço\s+|valor\s+)?unit[áa]rio|[eé]\s+unit[áa]rio\b|por\s+(?:metro|m\b|unidade|un\b|peça|kg))\b", text, re.I):
+            tipo_preco = "unitario"
+            precisa_esclarecer = False
+
+    # Se o tipo_preco ainda não foi definido, é AMBÍGUO!
+    if valor_produto is not None and not tipo_preco:
+        tipo_preco = "ambiguo"
+        precisa_esclarecer = True
+        motivo_esclarecimento = (
+            f"Por favor, confirme se o valor de R$ {valor_produto:g} informado "
+            f"refere-se ao preço total pelos {req_qty:g} {req_unit} ou ao preço unitário por {req_unit}."
+        )
+
+    # Menção de unidade diferente sem conversão (ex: caixa a R$ 350 cada caixa)
+    if not unidade_cotada:
+        m_u = re.search(r"\b(caixa|pacote|rolo|bobina)s?\b", text, re.I)
+        if m_u:
+            unidade_cotada = normalize_unit(m_u.group(1))
+
+    if unidade_cotada and not are_units_compatible(req_unit, unidade_cotada) and not conversao:
+        precisa_esclarecer = True
+        motivo_esclarecimento = (
+            f"A cotação foi informada em '{unidade_cotada}', mas o pedido é de {req_qty:g} {req_unit}. "
+            f"Por favor, informe quantos {req_unit} estão contidos em cada {unidade_cotada} para calcularmos o valor total."
+        )
+
+    return {
+        "valor_produto": valor_produto,
+        "tipo_preco": tipo_preco,
+        "unidade_cotada": unidade_cotada or req_unit,
+        "quantidade_cotada": req_qty if tipo_preco == "total" else 1,
+        "conversao_unidade": conversao,
+        "frete": frete,
+        "prazo_dias": prazo,
+        "qtd_disponivel": None,
+        "condicoes": None,
+        "precisa_esclarecer": precisa_esclarecer,
+        "motivo_esclarecimento": motivo_esclarecimento,
+    }
+
+def process_quote_data(item: dict, parsed: dict) -> dict:
+    """Processa de forma determinística os dados da cotação.
+    Diferencia claramente preço unitário de total, preserva conexão entre
+    quantidade, unidade, valor e frete, e impede suposições sobre unidades monetárias."""
+    req_qty = float(item.get("quantidade") or 1)
+    req_unit = normalize_unit(item.get("unidade"))
+
+    valor = parsed.get("valor_produto")
+    tipo = (parsed.get("tipo_preco") or "").strip().lower()
+    frete = float(parsed["frete"]) if parsed.get("frete") is not None else None
+    prazo = int(parsed["prazo_dias"]) if parsed.get("prazo_dias") is not None else None
+    qtd_disp = float(parsed["qtd_disponivel"]) if parsed.get("qtd_disponivel") is not None else None
+    condicoes = parsed.get("condicoes")
+    precisa_esclarecer = bool(parsed.get("precisa_esclarecer"))
+    motivo = parsed.get("motivo_esclarecimento")
+    unidade_cotada = normalize_unit(parsed.get("unidade_cotada") or req_unit)
+    conversao = parsed.get("conversao_unidade")
+
+    # 1. Se preço não foi informado
+    if valor is None:
+        return {
+            "status": "respondida_parcial",
+            "unit_price": None,
+            "product_total": None,
+            "freight": frete,
+            "lead_days": prazo,
+            "available_qty": qtd_disp,
+            "conditions": condicoes,
+            "price_type": None,
+            "clarification_needed": "Preço não informado.",
+            "quoted_unit": unidade_cotada,
+            "quoted_qty": None,
+        }
+
+    # 2. Ambiguidade: Não foi especificado se é unitário ou total
+    if tipo == "ambiguo" or tipo not in ("unitario", "total") or precisa_esclarecer:
+        if not motivo:
+            motivo = (
+                f"Por favor, confirme se o valor de R$ {valor:g} informado "
+                f"refere-se ao preço total pelos {req_qty:g} {req_unit} ou ao preço unitário por {req_unit}."
+            )
+        return {
+            "status": "aguardando_esclarecimento",
+            "unit_price": None,
+            "product_total": None,
+            "freight": frete,
+            "lead_days": prazo,
+            "available_qty": qtd_disp,
+            "conditions": condicoes,
+            "price_type": "ambiguo",
+            "clarification_needed": motivo,
+            "quoted_unit": unidade_cotada,
+            "quoted_qty": parsed.get("quantidade_cotada"),
+        }
+
+    # 3. Tratamento de Unidades Diferentes com ou sem conversão
+    if not are_units_compatible(req_unit, unidade_cotada):
+        if conversao and conversao.get("multiplicador"):
+            mult = float(conversao["multiplicador"])
+            if mult <= 0: mult = 1.0
+            pacotes = math.ceil(req_qty / mult)
+            if tipo == "unitario":
+                product_total = round(pacotes * valor, 2)
+                unit_price = round(product_total / req_qty, 4)
+            else:
+                product_total = round(valor, 2)
+                unit_price = round(product_total / req_qty, 4)
+        else:
+            # Unidade diferente sem informação do tamanho da embalagem: requer esclarecimento
+            motivo = (
+                f"A cotação foi informada em '{parsed.get('unidade_cotada')}', mas o pedido é de {req_qty:g} {req_unit}. "
+                f"Por favor, informe quantos {req_unit} vêm em cada {parsed.get('unidade_cotada')}."
+            )
+            return {
+                "status": "aguardando_esclarecimento",
+                "unit_price": None,
+                "product_total": None,
+                "freight": frete,
+                "lead_days": prazo,
+                "available_qty": qtd_disp,
+                "conditions": condicoes,
+                "price_type": "unidade_incompativel",
+                "clarification_needed": motivo,
+                "quoted_unit": unidade_cotada,
+                "quoted_qty": parsed.get("quantidade_cotada"),
+            }
+    else:
+        # Unidades compatíveis
+        if tipo == "total":
+            product_total = round(float(valor), 2)
+            unit_price = round(product_total / req_qty, 4)
+        else:  # unitario
+            unit_price = round(float(valor), 4)
+            product_total = round(unit_price * req_qty, 2)
+
+    status = "respondida" if (frete is not None and prazo is not None) else "respondida_parcial"
+
+    return {
+        "status": status,
+        "unit_price": unit_price,
+        "product_total": product_total,
+        "freight": frete,
+        "lead_days": prazo,
+        "available_qty": qtd_disp,
+        "conditions": condicoes,
+        "price_type": tipo,
+        "clarification_needed": None,
+        "quoted_unit": unidade_cotada,
+        "quoted_qty": parsed.get("quantidade_cotada") or req_qty,
+    }
 
 def interpret(rid, raw):
     item = llm.ask_json(
@@ -10,7 +323,13 @@ def interpret(rid, raw):
         '{"produto","quantidade"(número),"unidade","especificacoes","cidade_destino","uf_destino","cep","prazo_max_dias"(número|null)}. '
         "Regras: se houver medida (ex: '10metros', '800m', '50kg', '20un'), o número é 'quantidade' e a medida é 'unidade' "
         "(não coloque metragem em 'especificacoes' exceto se já houver outra quantidade explícita). "
+        "Padronize a unidade de medida (ex: 'metros', 'kg', 'unidades', 'litros', 'rolos', 'caixas'). "
         "Use null no que não foi informado; nunca invente.", raw)
+    if item and item.get("unidade"):
+        item["unidade"] = normalize_unit(item["unidade"])
+    if item and item.get("quantidade") is not None:
+        try: item["quantidade"] = float(item["quantidade"])
+        except (ValueError, TypeError): pass
     db.ex("UPDATE requests SET item=?, status='cotando' WHERE id=?", (json.dumps(item, ensure_ascii=False), rid))
     qtd_log = f"{item.get('quantidade')} {item.get('unidade')}" if item.get('quantidade') else "qtd não informada"
     db.log(rid, f"Interpretador: {qtd_log} de {item.get('produto')} para {item.get('cidade_destino')}")
@@ -18,10 +337,10 @@ def interpret(rid, raw):
 
 def web_fallback(item):
     """Plano B 100% grátis (sem cota de IA para busca): DuckDuckGo + leitura das páginas. Só extrai o que está no texto."""
-    import re, html as H
     UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36"}
     qy = f"{item.get('produto')} {item.get('especificacoes') or ''} comprar preço"
     page = None
+    ultimo_erro = None
     for _tentativa in range(3):
         try:
             page = httpx.post("https://html.duckduckgo.com/html/", data={"q": qy}, headers=UA, timeout=20, follow_redirects=True).text
@@ -38,6 +357,7 @@ def web_fallback(item):
         d = urllib.parse.urlparse(u).netloc
         if u.startswith("http") and d not in seen: seen.add(d); urls.append(u)
     docs = []
+    import html as H
     for u in urls[:6]:
         try:
             t = httpx.get(u, headers=UA, timeout=12, follow_redirects=True).text
@@ -64,7 +384,6 @@ def simulated_fallback(item):
         if valid: return valid
     except Exception:
         pass
-    # Mock determinístico de emergência (sem gastar cota de IA)
     prod = item.get("produto") or "Produto"
     cid = item.get("cidade_destino") or "São Paulo"
     uf = item.get("uf_destino") or "SP"
@@ -125,10 +444,9 @@ def request_text(item):
     qtd = f"{item.get('quantidade')} {item.get('unidade') or 'un'}" if item.get('quantidade') else "quantidade a definir"
     return (f"Olá! Preciso de cotação: {qtd} de {item.get('produto')}. "
             f"Specs: {item.get('especificacoes') or '-'}. Entrega em {item.get('cidade_destino')}/{item.get('uf_destino')} "
-            f"{item.get('cep') or ''}. Pode informar preço unitário, frete, prazo de entrega e quantidade disponível?")
+            f"{item.get('cep') or ''}. Pode informar preço (especificando claramente se o valor é unitário ou total para {qtd}), frete, prazo de entrega e quantidade disponível?")
 
 def tg_prefill_link(contact, text):
-    """Gera link do Telegram que deixa o texto digitado no campo de mensagem para confirmação manual."""
     encoded = urllib.parse.quote(text)
     c = (contact or "").strip()
     if c.startswith("@"):
@@ -144,7 +462,6 @@ def wa_link(contact, text):
     return f"https://wa.me/{digits}?text={encoded}" if len(digits) >= 10 else f"https://api.whatsapp.com/send?text={encoded}"
 
 async def confirm_and_send(qid: int):
-    """Envia a cotação diretamente ao fornecedor no Telegram após confirmação."""
     qt = db.q("SELECT * FROM quotes WHERE id=?", (qid,))
     if not qt: return False
     qt = qt[0]
@@ -168,7 +485,6 @@ async def dispatch(rid, item):
     for qt in db.q("SELECT * FROM quotes WHERE request_id=?", (rid,)):
         msg_with_ref = txt + f"\n(ref #{qt['id']})"
         if qt["chat_id"] and buyer_chat:
-            # Fornecedor conhecido: pede confirmação interativa com botões ao comprador
             db.ex("UPDATE quotes SET status='aguardando_confirmacao' WHERE id=?", (qt["id"],))
             confirm_msg = (
                 f"📋 Pedido #{rid} — Confirmação de Cotação\n"
@@ -186,10 +502,8 @@ async def dispatch(rid, item):
             }
             await telegram.send(buyer_chat, confirm_msg, reply_markup=keyboard)
         elif qt["chat_id"]:
-            # Conhecido mas sem buyer_chat (criado via web): aguarda confirmação no Kanban
             db.ex("UPDATE quotes SET status='aguardando_confirmacao' WHERE id=?", (qt["id"],))
         else:
-            # Novo fornecedor: aguarda contato com pre-fill
             db.ex("UPDATE quotes SET status='aguardando_contato' WHERE id=?", (qt["id"],))
             if buyer_chat:
                 tg_url = tg_prefill_link(qt.get("contact"), msg_with_ref)
@@ -227,7 +541,6 @@ def _last(chat_id, status=None):
     return r[0] if r else None
 
 async def buyer_cmd(chat_id, text):
-    """Comandos do COMPRADOR no Telegram. Retorna True se tratou a mensagem."""
     pend = _last(chat_id, "aguardando_esclarecimento")
     if pend and not text.startswith("/"):
         novo_raw = f"{pend['raw']} (especificação: {text.strip()})"
@@ -272,7 +585,7 @@ def notify_buyer(rid, rows, why):
     chat = db.q("SELECT buyer_chat FROM requests WHERE id=?", (rid,))[0]["buyer_chat"]
     if not chat: return
     ls = "\n".join(f"{i}. {'✅' if r['viavel'] else '❌'} {r['supplier']}: R$ {r['total']:.2f} "
-                    f"(unit. R$ {r['unit_price']:.2f}, frete R$ {r['freight']:.2f}{' est.' if r['freight_estimated'] else ''}, "
+                    f"(prod. R$ {r.get('product_total', r['unit_price']):.2f}, unit. R$ {r['unit_price']:.2f}, frete R$ {r['freight']:.2f}{' est.' if r['freight_estimated'] else ''}, "
                     f"{r['lead_days'] if r['lead_days'] is not None else '—'}d)" for i, r in enumerate(rows, 1))
     telegram.send_sync(chat, f"📊 Pedido #{rid}\n{ls}\n\n💡 {why}\n\nResponda /decidir (1ª opção) ou /decidir 2.")
 
@@ -325,42 +638,89 @@ async def on_telegram(chat_id, text):
         prompt_reply = (
             f"📦 Cotação para *{qt['supplier']}*:\n"
             f"{request_text(item)}\n\n"
-            f"💬 *Responda aqui com sua proposta* (informe preço unitário, frete e prazo de entrega)."
+            f"💬 *Responda aqui com sua proposta* (informe se o preço é unitário ou total pelos produtos, frete e prazo de entrega)."
         )
         return await telegram.send(chat_id, prompt_reply)
-    qs = db.q("SELECT * FROM quotes WHERE chat_id=? AND status IN ('enviada','respondida_parcial') ORDER BY id DESC", (chat_id,))
+    qs = db.q("SELECT * FROM quotes WHERE chat_id=? AND status IN ('enviada','respondida_parcial','aguardando_esclarecimento') ORDER BY id DESC", (chat_id,))
     if qs: await ingest_reply(qs[0]["id"], text)
     else: await telegram.send(chat_id, "Use /cotar para abrir uma cotação (/ajuda).")
 
 async def ingest_reply(qid, text):
     qt = db.q("SELECT * FROM quotes WHERE id=?", (qid,))[0]
     req = db.q("SELECT * FROM requests WHERE id=?", (qt["request_id"],))[0]
-    # Acumula histórico completo para o LLM ter contexto de todas as mensagens anteriores
+    item = json.loads(req["item"]) if req["item"] else {}
     prev = qt["raw_reply"] or ""
     full_text = (prev + "\n" + text).strip()
-    d = await asyncio.to_thread(llm.ask_json,
-        "Você é o agente Parser. Converta a resposta livre do fornecedor em "
-        '{"preco_unitario"(BRL número|null),"frete"(BRL número|null; 0 se disse frete grátis),"prazo_dias"(número|null),"qtd_disponivel"(número|null),"condicoes"(texto curto|null),"falta":[campos ausentes]}. Nunca invente.',
-        f"Pedido: {req['item']}\nResposta completa do fornecedor até agora: {full_text}")
-    db.ex("""UPDATE quotes SET unit_price=COALESCE(?,unit_price), freight=COALESCE(?,freight), lead_days=COALESCE(?,lead_days),
-             available_qty=COALESCE(?,available_qty), conditions=COALESCE(?,conditions), raw_reply=? WHERE id=?""",
-          (d.get("preco_unitario"), d.get("frete"), d.get("prazo_dias"), d.get("qtd_disponivel"), d.get("condicoes"),
-           full_text, qid))
-    # Verifica o que está REALMENTE faltando no banco (após COALESCE), não só na última mensagem
-    qt_atual = db.q("SELECT * FROM quotes WHERE id=?", (qid,))[0]
-    faltando = []
-    if qt_atual["unit_price"] is None: faltando.append("preco unitario")
-    if qt_atual["lead_days"]  is None: faltando.append("prazo dias")
-    if qt_atual["freight"]    is None: faltando.append("frete")
-    if faltando and qt["chat_id"]:
-        db.ex("UPDATE quotes SET status='respondida_parcial' WHERE id=?", (qid,))
-        await telegram.send(qt["chat_id"], "Obrigado! Ainda preciso de: " + ", ".join(faltando) + ".")
+
+    d = None
+    try:
+        sys_prompt = (
+            "Você é o agente Parser de cotações B2B. Sua função é analisar a mensagem do fornecedor e extrair os dados comerciais com extrema precisão.\n"
+            f"Pedido original: Produto: {item.get('produto')}, Quantidade: {item.get('quantidade')}, Unidade: {item.get('unidade')}.\n\n"
+            "REGRAS OBRIGATÓRIAS:\n"
+            "1. TIPO DE PREÇO: identifique se o valor é 'unitario', 'total' ou 'ambiguo':\n"
+            "   - 'unitario': somente se o fornecedor explicitou que é por unidade/metro (ex: 'R$ 2/m', 'preço unitário: 2', 'por metro', 'cada').\n"
+            "   - 'total': somente se o fornecedor explicitou que é pelo total/lote/pedido (ex: 'R$ 1.500 pelo cabo', '1500 pelos 800m', 'total: 1500', '1500 no lote', 'fica 1500 tudo').\n"
+            "   - 'ambiguo': se informou valor numérico sem qualificar se é total ou unitário (ex: '1500', 'preço: 1500', '1500 100 5 dias'). NUNCA suponha!\n"
+            "2. PROIBIÇÃO DE SUPOSIÇÃO: NUNCA invente ou deduza uma unidade monetária ou de medida não especificada. Se não estiver claro, marque 'tipo_preco': 'ambiguo' e 'precisa_esclarecer': true.\n"
+            "3. UNIDADE E CONVERSÃO: se cotou em unidade diferente (ex: rolo de 100m para pedido em metros), informe 'unidade_cotada' e 'conversao_unidade': {'multiplicador': 100, 'unidade_base': 'metros'}. Se não informou o tamanho do pacote, marque 'precisa_esclarecer': true.\n"
+            "4. FRETE: número em BRL (0 se frete grátis, null se não informado).\n"
+            "5. PRAZO: dias úteis/corridos como número inteiro (null se não informado).\n"
+            "Retorne JSON no formato:\n"
+            "{\"valor_produto\": número|null, \"tipo_preco\": \"unitario\"|\"total\"|\"ambiguo\"|null, "
+            "\"unidade_cotada\": string|null, \"quantidade_cotada\": número|null, "
+            "\"conversao_unidade\": {\"multiplicador\": número, \"unidade_base\": string}|null, "
+            "\"frete\": número|null, \"prazo_dias\": número|null, \"qtd_disponivel\": número|null, "
+            "\"condicoes\": string|null, \"precisa_esclarecer\": boolean, \"motivo_esclarecimento\": string|null}"
+        )
+        d = await asyncio.to_thread(llm.ask_json, sys_prompt, f"Histórico da resposta do fornecedor:\n{full_text}")
+    except Exception as e:
+        print(f"[ingest_reply] LLM parser exception: {e}")
+
+    # Fallback determinístico caso o LLM falhe ou não qualifique campos essenciais
+    if not d or not isinstance(d, dict) or (d.get("valor_produto") is None and d.get("frete") is None):
+        det = deterministic_parse_reply(full_text, item)
+        if not d or not isinstance(d, dict):
+            d = det
+        else:
+            for k, v in det.items():
+                if d.get(k) is None and v is not None:
+                    d[k] = v
+
+    calc = process_quote_data(item, d)
+
+    db.ex("""UPDATE quotes SET unit_price=?, product_total=?, freight=COALESCE(?,freight), lead_days=COALESCE(?,lead_days),
+             available_qty=COALESCE(?,available_qty), conditions=COALESCE(?,conditions), raw_reply=?,
+             price_type=?, quoted_unit=?, quoted_qty=?, clarification_needed=?, status=? WHERE id=?""",
+          (calc["unit_price"], calc["product_total"], calc["freight"], calc["lead_days"],
+           calc["available_qty"], calc["conditions"], full_text,
+           calc["price_type"], calc["quoted_unit"], calc["quoted_qty"], calc["clarification_needed"],
+           calc["status"], qid))
+
+    if calc["status"] == "aguardando_esclarecimento":
+        db.log(qt["request_id"], f"Parser: cotação #{qid} ({qt['supplier']}) requer esclarecimento: {calc['clarification_needed']}")
+        if qt["chat_id"]:
+            await telegram.send(qt["chat_id"], f"Obrigado pelo retorno! Para registrarmos sua proposta corretamente:\n👉 {calc['clarification_needed']}")
+        if req.get("buyer_chat"):
+            await telegram.send(req["buyer_chat"], f"⚠️ Cotação de {qt['supplier']} precisa de esclarecimento ({calc['clarification_needed']}). Já solicitei ao fornecedor!")
+    elif calc["status"] == "respondida_parcial":
+        qt_atual = db.q("SELECT * FROM quotes WHERE id=?", (qid,))[0]
+        faltando = []
+        if qt_atual["unit_price"] is None and qt_atual["product_total"] is None: faltando.append("preço")
+        if qt_atual["lead_days"] is None: faltando.append("prazo de entrega")
+        if qt_atual["freight"] is None: faltando.append("frete")
+        db.log(qt["request_id"], f"Parser: cotação #{qid} ({qt['supplier']}) respondida parcialmente (falta: {', '.join(faltando)})")
+        if faltando and qt["chat_id"]:
+            await telegram.send(qt["chat_id"], "Obrigado! Para completar sua cotação, ainda preciso de: " + ", ".join(faltando) + ".")
     else:
         db.ex("UPDATE quotes SET status='respondida' WHERE id=?", (qid,))
-        if qt["chat_id"]: await telegram.send(qt["chat_id"], "Cotação registrada. Obrigado!")
-        db.log(qt["request_id"], f"Parser: resposta de {qt['supplier']} convertida em cotação")
-    open_ = db.q("SELECT 1 FROM quotes WHERE request_id=? AND status IN ('enviada','respondida_parcial')", (qt["request_id"],))
-    if not open_: await asyncio.to_thread(compare, qt["request_id"])
+        db.log(qt["request_id"], f"Parser: proposta de {qt['supplier']} validada com sucesso ({calc['price_type']}: R$ {calc['product_total']:.2f} + frete R$ {calc['freight']:.2f})")
+        if qt["chat_id"]:
+            await telegram.send(qt["chat_id"], f"✅ Cotação registrada com sucesso (R$ {calc['product_total']:.2f} produtos + R$ {calc['freight']:.2f} frete, prazo {calc['lead_days']} dias). Obrigado!")
+
+    open_ = db.q("SELECT 1 FROM quotes WHERE request_id=? AND status IN ('enviada','respondida_parcial','aguardando_esclarecimento')", (qt["request_id"],))
+    if not open_:
+        await asyncio.to_thread(compare, qt["request_id"])
 
 # ---------- logística ----------
 def _geo(place):
@@ -369,6 +729,7 @@ def _geo(place):
                       headers={"User-Agent": "comprador-ia/1.0"}, timeout=15).json()
         return float(r[0]["lat"]), float(r[0]["lon"])
     except Exception: return None
+
 def _km(a, b):
     R = 6371; p = math.pi / 180
     x = math.sin((b[0]-a[0])*p/2)**2 + math.cos(a[0]*p)*math.cos(b[0]*p)*math.sin((b[1]-a[1])*p/2)**2
@@ -391,19 +752,23 @@ def compare(rid):
     req = db.q("SELECT * FROM requests WHERE id=?", (rid,))[0]; item = json.loads(req["item"])
     qty = float(item.get("quantidade") or 1)
     rows = []
-    for qt in db.q("SELECT * FROM quotes WHERE request_id=? AND unit_price IS NOT NULL", (rid,)):
+    for qt in db.q("SELECT * FROM quotes WHERE request_id=? AND (unit_price IS NOT NULL OR product_total IS NOT NULL) AND status IN ('respondida', 'respondida_parcial')", (rid,)):
         qt = logistics(item, qt)
         if qt["freight"] is None: continue
-        qt["total"] = round(qt["unit_price"] * qty + qt["freight"], 2)
+        prod_total = qt["product_total"] if qt.get("product_total") is not None else round(qt["unit_price"] * qty, 2)
+        if qt.get("unit_price") is None:
+            qt["unit_price"] = round(prod_total / qty, 4)
+        qt["product_total"] = prod_total
+        qt["total"] = round(prod_total + qt["freight"], 2)
         qt["viavel"] = (qt["available_qty"] is None or qt["available_qty"] >= qty) and \
                        (not item.get("prazo_max_dias") or qt["lead_days"] is None or qt["lead_days"] <= item["prazo_max_dias"])
         rows.append(qt)
     rows.sort(key=lambda r: (not r["viavel"], r["total"]))
     if not rows:
         db.log(rid, "Comparador: nenhuma cotação completa ainda"); return
-    slim = [{k: r[k] for k in ("id","supplier","unit_price","freight","freight_estimated","lead_days","available_qty","conditions","total","viavel","url")} for r in rows]
+    slim = [{k: r[k] for k in ("id","supplier","unit_price","product_total","price_type","freight","freight_estimated","lead_days","available_qty","conditions","total","viavel","url") if k in r} for r in rows]
     why = llm.ask("Você é o agente Comparador. Explique em português, em até 8 linhas, qual fornecedor tem a melhor condição pelo CUSTO TOTAL "
-                  "(preço×qtd + frete) e prazo, citando números, critérios usados, descartes (inviáveis) e o que é estimativa. Não invente dados.",
+                  "(preço total dos produtos + frete) e prazo, citando números, critérios usados, descartes (inviáveis) e o que é estimativa. Não invente dados.",
                   f"Pedido: {json.dumps(item, ensure_ascii=False)}\nCotações (ordenadas): {json.dumps(slim, ensure_ascii=False)}")
     db.ex("UPDATE requests SET status='comparando', reasoning=?, ranking=? WHERE id=?", (why, json.dumps(slim, ensure_ascii=False), rid))
     db.log(rid, f"Comparador: {len(rows)} propostas ranqueadas por custo total")
@@ -448,10 +813,8 @@ def _is_ambiguo(item: dict) -> bool:
     if not sem_spec:
         return False
     palavras = produto.split()
-    # Se for exatamente o nome genérico (ex: "cabo", "fio", "parafuso")
     if produto in _GENERICOS:
         return True
-    # Se for categoria geral de cabo/fio elétrico sem bitola (ex: "cabo elétrico", "cabo flexível")
     if len(palavras) <= 2 and palavras[0] in ("cabo", "fio") and palavras[-1] in ("eletrico", "elétrico", "flexivel", "flexível"):
         return True
     return False
