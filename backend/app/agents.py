@@ -8,6 +8,8 @@ def interpret(rid, raw):
     item = llm.ask_json(
         "Você é o agente Interpretador de compras B2B. Extraia do pedido, mesmo mal escrito: "
         '{"produto","quantidade"(número),"unidade","especificacoes","cidade_destino","uf_destino","cep","prazo_max_dias"(número|null)}. '
+        "Regras: se houver medida (ex: '10metros', '800m', '50kg', '20un'), o número é 'quantidade' e a medida é 'unidade' "
+        "(não coloque metragem em 'especificacoes' exceto se já houver outra quantidade explícita). "
         "Use null no que não foi informado; nunca invente.", raw)
     db.ex("UPDATE requests SET item=?, status='cotando' WHERE id=?", (json.dumps(item, ensure_ascii=False), rid))
     qtd_log = f"{item.get('quantidade')} {item.get('unidade')}" if item.get('quantidade') else "qtd não informada"
@@ -49,8 +51,32 @@ def web_fallback(item):
         '{"fornecedor","url"(a url da página dada),"produto","preco_unitario"(BRL, só se aparecer no texto, senão null),"cidade"(só se aparecer, senão null),"contato"(só se aparecer, senão null)}. '
         "NUNCA invente nada que não esteja no texto.", json.dumps({"pedido": item, "paginas": docs}, ensure_ascii=False))
 
+def simulated_fallback(item):
+    """Fallback quando busca web e alternativa falham: gera 3 fornecedores simulados e coerentes (conforme Requisito 03)."""
+    try:
+        res = llm.ask_json(
+            "Você é o agente Pesquisador. A busca web não retornou resultados. Conforme o edital B2B, gere lista de 3 fornecedores SIMULADOS e realistas no Brasil para este produto. "
+            'Retorne lista: [{"fornecedor","url","produto","preco_unitario"(número BRL realista),"cidade","contato"}]. '
+            "Seja coerente com os preços de mercado para B2B.",
+            json.dumps(item, ensure_ascii=False))
+        if isinstance(res, dict): res = next((v for v in res.values() if isinstance(v, list)), [res])
+        valid = [x for x in res if isinstance(x, dict) and x.get("fornecedor")]
+        if valid: return valid
+    except Exception:
+        pass
+    # Mock determinístico de emergência (sem gastar cota de IA)
+    prod = item.get("produto") or "Produto"
+    cid = item.get("cidade_destino") or "São Paulo"
+    uf = item.get("uf_destino") or "SP"
+    return [
+        {"fornecedor": f"Distribuidora Regional {uf}", "url": f"https://simulacao.com.br/distribuidora-{uf.lower()}", "produto": prod, "preco_unitario": 28.50, "cidade": cid, "contato": f"@vendas_{uf.lower()}_bot"},
+        {"fornecedor": "Mega Suprimentos B2B", "url": "https://simulacao.com.br/mega-suprimentos", "produto": prod, "preco_unitario": 26.90, "cidade": "Campinas", "contato": "+55 19 99999-1001"},
+        {"fornecedor": "Lojas do Brasil Atacado", "url": "https://simulacao.com.br/lojas-brasil", "produto": prod, "preco_unitario": 31.00, "cidade": "São Paulo", "contato": "+55 11 98888-2002"},
+    ]
+
 def search(rid, item):
     known = [s["name"] for s in db.q("SELECT name FROM suppliers ORDER BY wins DESC, quotes DESC LIMIT 5")]
+    res = []
     try:
         res = llm.ask_json(
             "Você é o agente Pesquisador. Use a busca web para achar fornecedores REAIS que vendem o produto e entregam no Brasil. "
@@ -61,18 +87,39 @@ def search(rid, item):
             json.dumps(item, ensure_ascii=False), search=True)
     except llm.RateLimit:
         db.log(rid, "Pesquisador: busca do Gemini sem cota, usando busca alternativa (DuckDuckGo)")
-        res = web_fallback(item)
+        try:
+            res = web_fallback(item)
+        except Exception as e:
+            db.log(rid, f"Pesquisador: busca alternativa falhou ({e})")
+            res = []
+    except Exception as e:
+        db.log(rid, f"Pesquisador: busca web falhou ({e}), tentando alternativa")
+        try:
+            res = web_fallback(item)
+        except Exception:
+            res = []
+
     if isinstance(res, dict): res = next((v for v in res.values() if isinstance(v, list)), [res])
-    res = [x for x in res if isinstance(x, dict)]
+    res = [x for x in res if isinstance(x, dict) and x.get("fornecedor")]
+
+    is_simulado = False
+    if not res:
+        db.log(rid, "Pesquisador: nenhum fornecedor na web; ativando fornecedores simulados (Requisito 03)")
+        res = simulated_fallback(item)
+        is_simulado = True
+
     for s in res:
-        if not s.get("url"): continue
+        url = s.get("url") or f"https://simulacao.com.br/{urllib.parse.quote(s['fornecedor'])}"
         tok = secrets.token_urlsafe(8)
         hist = db.q("SELECT chat_id FROM suppliers WHERE name=?", (s["fornecedor"],))
+        source_label = f"[Simulado] {url}" if is_simulado else url
         db.ex("INSERT INTO quotes(request_id,supplier,url,product,city,contact,token,chat_id,unit_price,source) VALUES(?,?,?,?,?,?,?,?,?,?)",
-              (rid, s["fornecedor"], s["url"], s.get("produto"), s.get("cidade"), s.get("contato"), tok,
-               hist[0]["chat_id"] if hist else None, s.get("preco_unitario"), s["url"]))
+              (rid, s["fornecedor"], url, s.get("produto"), s.get("cidade"), s.get("contato"), tok,
+               hist[0]["chat_id"] if hist else None, s.get("preco_unitario"), source_label))
         db.ex("INSERT OR IGNORE INTO suppliers(name,city) VALUES(?,?)", (s["fornecedor"], s.get("cidade")))
-    db.log(rid, f"Pesquisador: {len(res)} fornecedores encontrados na web (com fonte)")
+    
+    tipo_log = "simulados (Requisito 03)" if is_simulado else "na web (com fonte)"
+    db.log(rid, f"Pesquisador: {len(res)} fornecedores registrados ({tipo_log})")
 
 def request_text(item):
     qtd = f"{item.get('quantidade')} {item.get('unidade') or 'un'}" if item.get('quantidade') else "quantidade a definir"
@@ -398,7 +445,16 @@ def _is_ambiguo(item: dict) -> bool:
     """Retorna True se produto for genérico demais e sem especificações."""
     produto = (item.get("produto") or "").lower().strip()
     sem_spec = not item.get("especificacoes")
-    return sem_spec and any(g == produto or produto.startswith(g + " ") for g in _GENERICOS)
+    if not sem_spec:
+        return False
+    palavras = produto.split()
+    # Se for exatamente o nome genérico (ex: "cabo", "fio", "parafuso")
+    if produto in _GENERICOS:
+        return True
+    # Se for categoria geral de cabo/fio elétrico sem bitola (ex: "cabo elétrico", "cabo flexível")
+    if len(palavras) <= 2 and palavras[0] in ("cabo", "fio") and palavras[-1] in ("eletrico", "elétrico", "flexivel", "flexível"):
+        return True
+    return False
 
 async def run(rid, raw):
     try:
