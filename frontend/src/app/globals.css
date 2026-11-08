@@ -190,3 +190,297 @@ textarea.s {
   height: 50px;
   margin-top: 4px;
 }
+
+/* Botão Entregue no Card Decidido */
+.btn-entregue {
+  background: var(--ok);
+  color: #022013;
+  border: none;
+  border-radius: 5px;
+  padding: 5px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.2s ease;
+}
+
+.btn-entregue:hover {
+  filter: brightness(1.15);
+  box-shadow: 0 2px 8px rgba(46, 204, 143, 0.3);
+}
+
+/* Seção de Histórico de Compras */
+.history-section {
+  padding: 0 24px 36px;
+}
+
+.history-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin-bottom: 14px;
+}
+
+.history-toggle-btn {
+  background: var(--p);
+  border: 1px solid var(--b);
+  color: var(--t);
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  transition: all 0.2s ease;
+}
+
+.history-toggle-btn:hover {
+  border-color: var(--a);
+  background: #182142;
+}
+
+.history-toggle-btn.active {
+  border-color: var(--a);
+  background: #16224c;
+  box-shadow: 0 0 10px rgba(10, 155, 255, 0.15);
+}
+
+.history-icon {
+  font-size: 16px;
+}
+
+.history-badge {
+  background: var(--a);
+  color: #001;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 10px;
+}
+
+.history-arrow {
+  color: var(--m);
+  font-size: 12px;
+  font-weight: normal;
+}
+
+.history-content {
+  background: var(--p);
+  border: 1px solid var(--b);
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--b);
+}
+
+.history-header h2 {
+  font-size: 16px;
+  margin: 0;
+  color: var(--t);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.history-subtitle {
+  color: var(--m);
+  font-size: 12px;
+  margin: 0;
+}
+
+.history-empty {
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--m);
+}
+
+.history-empty p {
+  margin: 8px 0 0;
+  font-size: 14px;
+}
+
+.history-date-group {
+  margin-bottom: 24px;
+}
+
+.history-date-group:last-child {
+  margin-bottom: 0;
+}
+
+.history-date-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--m);
+  margin-bottom: 12px;
+  padding-bottom: 4px;
+  border-bottom: 1px dashed var(--b);
+}
+
+.history-date-icon {
+  font-size: 14px;
+}
+
+.history-date-count {
+  font-size: 12px;
+  color: var(--m);
+  font-weight: normal;
+}
+
+.history-card {
+  background: var(--bg);
+  border: 1px solid var(--b);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 12px;
+  transition: border-color 0.2s;
+}
+
+.history-card:hover {
+  border-color: #3b4d88;
+}
+
+.history-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.history-card-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--t);
+  margin: 0 0 6px 0;
+}
+
+.history-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.history-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  background: var(--p);
+  border: 1px solid var(--b);
+  padding: 2px 8px;
+  border-radius: 4px;
+  color: var(--m);
+}
+
+.history-tag b {
+  color: var(--t);
+}
+
+.history-tag.tag-ok {
+  background: rgba(46, 204, 143, 0.15);
+  border-color: var(--ok);
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.history-tag.tag-loc {
+  background: rgba(10, 155, 255, 0.1);
+  border-color: rgba(10, 155, 255, 0.4);
+  color: var(--a);
+}
+
+.history-winner-box {
+  background: #0d1428;
+  border: 1px solid var(--b);
+  border-left: 3px solid var(--ok);
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.history-winner-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.history-winner-title {
+  font-size: 13px;
+  color: var(--m);
+}
+
+.history-winner-name {
+  font-weight: 700;
+  color: var(--ok);
+  font-size: 14px;
+}
+
+.history-winner-totals {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.history-winner-price {
+  font-size: 14px;
+}
+
+.history-winner-savings {
+  font-size: 12px;
+  color: var(--ok);
+}
+
+.history-quotes-list {
+  margin-top: 10px;
+}
+
+.history-quotes-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--m);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.history-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  justify-content: flex-end;
+}
+
+.badge-winner {
+  background: rgba(46, 204, 143, 0.2);
+  color: var(--ok);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.badge-other {
+  color: var(--m);
+  font-size: 11px;
+}

@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS suppliers(name TEXT PRIMARY KEY, chat_id TEXT, city T
 """)
 try: _c.execute("ALTER TABLE requests ADD COLUMN buyer_chat TEXT"); _c.commit()
 except sqlite3.OperationalError: pass
+try: _c.execute("ALTER TABLE requests ADD COLUMN delivered_at TEXT"); _c.commit()
+except sqlite3.OperationalError: pass
 def q(sql, a=()):
     with _lock: return [dict(r) for r in _c.execute(sql, a).fetchall()]
 def ex(sql, a=()):

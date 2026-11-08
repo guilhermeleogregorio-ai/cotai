@@ -54,6 +54,24 @@ async def clarify(rid: int, b: Reply):
 async def cmp(rid: int): await asyncio.to_thread(agents.compare, rid); return {"ok": True}
 @app.post("/api/requests/{rid}/decide")
 def dec(rid: int, b: Decide): agents.decide(rid, b.quote_id); return {"ok": True}
+@app.post("/api/requests/{rid}/deliver")
+def deliver(rid: int):
+    r = db.q("SELECT * FROM requests WHERE id=?", (rid,))
+    if not r: raise HTTPException(404, "Pedido não encontrado")
+    db.ex("UPDATE requests SET status='entregue', delivered_at=CURRENT_TIMESTAMP WHERE id=?", (rid,))
+    db.log(rid, "Entrega confirmada: produto marcado como entregue e arquivado no histórico de compras")
+    return {"ok": True}
+@app.post("/api/requests/{rid}/undeliver")
+def undeliver(rid: int):
+    r = db.q("SELECT * FROM requests WHERE id=?", (rid,))
+    if not r: raise HTTPException(404, "Pedido não encontrado")
+    db.ex("UPDATE requests SET status='decidido' WHERE id=?", (rid,))
+    db.log(rid, "Entrega desfeita: produto retornado para a coluna Decidido do Kanban")
+    return {"ok": True}
+@app.get("/api/history")
+def get_history():
+    rows = db.q("SELECT * FROM requests WHERE status='entregue' ORDER BY COALESCE(delivered_at, created) DESC LIMIT 5")
+    return [full(r) for r in rows]
 @app.post("/api/requests/{rid}/negotiate")
 async def neg(rid: int): return {"enviadas": await agents.negotiate(rid)}
 @app.post("/api/quotes/{qid}/reply")  # fallback: colar a resposta do fornecedor recebida em outro canal
@@ -62,8 +80,14 @@ async def rep(qid: int, b: Reply): await agents.ingest_reply(qid, b.text); retur
 async def confirm_q(qid: int): return {"ok": await agents.confirm_and_send(qid)}
 @app.get("/api/stats")
 def stats():
-    d = db.q("SELECT COUNT(*) n, COALESCE(SUM(savings),0) s FROM requests WHERE status='decidido'")[0]
-    return {"decididas": d["n"], "economia_total": d["s"], "fornecedores": db.q("SELECT * FROM suppliers ORDER BY wins DESC LIMIT 10")}
+    d = db.q("SELECT COUNT(*) n, COALESCE(SUM(savings),0) s FROM requests WHERE status IN ('decidido', 'entregue')")[0]
+    ent = db.q("SELECT COUNT(*) n FROM requests WHERE status='entregue'")[0]["n"]
+    return {
+        "decididas": d["n"],
+        "economia_total": d["s"],
+        "entregues": ent,
+        "fornecedores": db.q("SELECT * FROM suppliers ORDER BY wins DESC LIMIT 10")
+    }
 
 @app.get("/")
 def index():
