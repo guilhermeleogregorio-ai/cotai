@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Comprador IA",
+  title: "Cota AI",
   description: "Plataforma de compras e cotações com agentes de IA",
 };
 

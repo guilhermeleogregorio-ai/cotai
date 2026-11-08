@@ -1,4 +1,4 @@
-# Comprador IA — Guerra das IAs / Hackathon Digitaly 03
+# Cota AI — Guerra das IAs / Hackathon Digitaly 03
 Plataforma de compras e cotações com agentes de IA.
 
 ## Rodar

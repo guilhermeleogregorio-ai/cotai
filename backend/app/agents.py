@@ -531,7 +531,7 @@ def invite_links(qt, item):
         "can_confirm": bool(qt.get("chat_id") and qt.get("status") in ("aguardando_confirmacao", "aguardando_contato")),
     }
 
-HELP = ("👋 Sou o Comprador IA.\n/cotar <o que precisa> - abre uma cotação\n/status - seus pedidos\n"
+HELP = ("👋 Sou o Cota AI.\n/cotar <o que precisa> - abre uma cotação\n/status - seus pedidos\n"
         "/comparar - ranking com o que já respondeu\n/decidir [n] - fecha com a opção n do ranking (padrão: 1ª)")
 
 def _last(chat_id, status=None):

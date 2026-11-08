@@ -359,7 +359,7 @@ export default function Home() {
         <div className="header-brand">
           <div className="header-logo-badge">IA</div>
           <div>
-            <h1>Comprador IA</h1>
+            <h1>Cota AI</h1>
             <span className="header-sub">Automação de Compras B2B com Agentes Inteligentes</span>
           </div>
           <span className="header-edition-pill">
@@ -1088,7 +1088,7 @@ export default function Home() {
             <div className="footer-brand-row">
               <div className="footer-logo">IA</div>
               <div>
-                <div className="footer-title">Comprador IA</div>
+                <div className="footer-title">Cota AI</div>
                 <div className="footer-subtitle">Automacao de Compras B2B com Agentes Inteligentes</div>
               </div>
             </div>
@@ -1138,7 +1138,7 @@ export default function Home() {
         </div>
 
         <div className="footer-bottom">
-          <span>Comprador IA · Hackathon Guerra das IAs · Digitaly 03 · {new Date().getFullYear()}</span>
+          <span>Cota AI · Hackathon Guerra das IAs · Digitaly 03 · {new Date().getFullYear()}</span>
           <span className="footer-bottom-right">Desenvolvido com Next.js, FastAPI e Google Gemini AI</span>
         </div>
       </footer>
@@ -1159,7 +1159,7 @@ export default function Home() {
                   Especificacoes de Engenharia
                 </h2>
                 <span className="tech-modal-sub">
-                  COMPRADOR IA // HACKATHON GUERRA DAS IAs // DIGITALY 03
+                  COTA AI // HACKATHON GUERRA DAS IAs // DIGITALY 03
                 </span>
               </div>
               <button

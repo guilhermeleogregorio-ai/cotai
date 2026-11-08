@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from . import db, agents, telegram
 
-app = FastAPI(title="Comprador IA")
+app = FastAPI(title="Cota AI")
 
 app.add_middleware(
     CORSMiddleware,
@@ -92,7 +92,7 @@ def stats():
 @app.get("/")
 def index():
     return {
-        "app": "Comprador IA API",
+        "app": "Cota AI API",
         "status": "online",
         "docs": "http://127.0.0.1:8000/docs",
         "frontend": "http://localhost:3000"
