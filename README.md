@@ -4,15 +4,19 @@ Plataforma de compras e cotações com agentes de IA.
 ## Rodar
 ```bash
 # Backend (FastAPI - porta 8000)
-cd comprador-ia
+cd backend
+# Se necessário, faça um ambiente virtual
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+# ou python -m pip install -r requirements.txt
 cp .env.example .env   # preencha as chaves
 uvicorn app.main:app --reload
+# ou python -m uvicorn app.main:app --reload
 
 # Frontend (Next.js - porta 3000)
+npm install
 npm run dev
-# ou: cd frontend && npm run dev
+# ou: cd frontend && npm install && npm run dev
 ```
 Abra http://localhost:3000 (Next.js) ou http://localhost:8000 (FastAPI). Crie o bot no @BotFather e ponha token/username no `.env`.
 
