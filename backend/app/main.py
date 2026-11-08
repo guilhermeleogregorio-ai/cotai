@@ -24,7 +24,6 @@ async def _s(): asyncio.create_task(telegram.poll(agents.on_telegram, agents.on_
 class New(BaseModel): text: str
 class Reply(BaseModel): text: str
 class Decide(BaseModel): quote_id: int
-
 def full(r):
     r["item"] = json.loads(r["item"]) if r["item"] else None
     r["log"] = json.loads(r["log"]); r["ranking"] = json.loads(r["ranking"]) if r["ranking"] else None
@@ -37,6 +36,22 @@ def full(r):
 async def create(b: New):
     rid = db.ex("INSERT INTO requests(raw) VALUES(?)", (b.text,))
     asyncio.create_task(agents.run(rid, b.text)); return {"id": rid}
+
+@app.post("/api/requests/audio")
+async def create_by_audio(file: UploadFile = File(...)):
+    """Recebe audio do comprador pedindo uma cotacao, transcreve com faster-whisper e abre o pedido no Kanban."""
+    from . import audio_agent
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "Arquivo de audio vazio")
+    text = await asyncio.to_thread(audio_agent.transcribe_audio, content, file.filename or "pedido.ogg")
+    if not text or not text.strip():
+        raise HTTPException(400, "Nao foi possivel identificar o que voce falou no audio")
+
+    rid = db.ex("INSERT INTO requests(raw) VALUES(?)", (text.strip(),))
+    db.log(rid, f"Pedido criado via audio do comprador (transcricao: '{text.strip()}')")
+    asyncio.create_task(agents.run(rid, text.strip()))
+    return {"id": rid, "transcription": text.strip()}
 @app.get("/api/requests")
 def lst(): return [full(r) for r in db.q("SELECT * FROM requests ORDER BY id DESC")]
 @app.post("/api/requests/{rid}/clarify")

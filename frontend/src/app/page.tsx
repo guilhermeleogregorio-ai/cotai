@@ -181,6 +181,7 @@ export default function Home() {
   const [replyTexts, setReplyTexts] = useState<Record<number, string>>({});
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [showTechModal, setShowTechModal] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -332,6 +333,47 @@ export default function Home() {
       await loadData();
     } catch (err) {
       console.error("Erro ao enviar resposta:", err);
+    }
+  };
+
+  const startPromptVoice = () => {
+    if (typeof window !== "undefined") {
+      const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRec) {
+        const rec = new SpeechRec();
+        rec.lang = "pt-BR";
+        rec.onstart = () => setIsRecording(true);
+        rec.onend = () => setIsRecording(false);
+        rec.onerror = () => setIsRecording(false);
+        rec.onresult = (evt: any) => {
+          const spoken = evt.results[0][0].transcript;
+          if (spoken) {
+            setNewText((prev) => (prev ? `${prev} ${spoken}` : spoken));
+          }
+        };
+        rec.start();
+      } else {
+        alert("Reconhecimento continuo de voz direto nao suportado neste navegador. Use o envio de arquivo de audio abaixo.");
+      }
+    }
+  };
+
+  const handleAudioQuoteUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/requests/audio", { method: "POST", body: fd });
+      if (res.ok) {
+        const d = await res.json();
+        alert(`Pedido aberto com sucesso via audio!\nTranscricao faster-whisper:\n"${d.transcription}"`);
+        await loadData();
+      } else {
+        alert("Nao foi possivel transcrever o audio do pedido.");
+      }
+    } catch (err) {
+      console.error("Erro ao enviar audio do pedido:", err);
     }
   };
 
@@ -624,10 +666,31 @@ export default function Home() {
               value={newText}
               onChange={(e) => setNewText(e.target.value)}
             />
+            <button
+              type="button"
+              className={`btn-prompt-mic ${isRecording ? "recording" : ""}`}
+              onClick={startPromptVoice}
+              title="Falar pedido por voz"
+            >
+              <span>{isRecording ? "Ouvindo..." : "Falar Pedido"}</span>
+            </button>
             <button type="submit">
               <span>Cotar</span>
               <span className="btn-arrow">→</span>
             </button>
+          </div>
+          <div style={{ marginTop: "8px", display: "flex", alignItems: "center", gap: "10px" }}>
+            <span style={{ fontSize: "11px", color: "var(--t-muted)" }}>Ou envie arquivo de audio (faster-whisper):</span>
+            <label htmlFor="prompt-audio-upload" className="btn-file-custom">
+              Subir Audio do Pedido
+            </label>
+            <input
+              id="prompt-audio-upload"
+              type="file"
+              accept="audio/*,.ogg,.mp3,.wav,.m4a"
+              style={{ display: "none" }}
+              onChange={handleAudioQuoteUpload}
+            />
           </div>
           <div className="prompt-suggestions">
             <span className="sug-title">Exemplos rápidos:</span>
@@ -1064,7 +1127,8 @@ export default function Home() {
                           ) : null}
                         </td>
                       </tr>
-                      {q.invite ? (
+                      
+                            {q.invite ? (
                         <tr>
                           <td colSpan={7}>
                             Convidar:{" "}
@@ -1124,10 +1188,14 @@ export default function Home() {
                                 Enviar texto
                               </button>
                               <span style={{ fontSize: "11px", color: "var(--t-muted)" }}>ou enviar audio (faster-whisper):</span>
+                              <label htmlFor={`quote-audio-${q.id}`} className="btn-file-custom">
+                                Subir Audio do Fornecedor
+                              </label>
                               <input
+                                id={`quote-audio-${q.id}`}
                                 type="file"
                                 accept="audio/*,.ogg,.mp3,.wav,.m4a"
-                                style={{ fontSize: "11px", color: "#94a3b8" }}
+                                style={{ display: "none" }}
                                 onChange={async (e) => {
                                   const file = e.target.files?.[0];
                                   if (!file) return;

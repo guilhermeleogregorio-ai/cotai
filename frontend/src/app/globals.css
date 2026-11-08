@@ -280,7 +280,7 @@ button[type="submit"]:hover .btn-arrow {
    ========================================================== */
 .cols {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
   padding: 0 32px 32px;
 }
@@ -302,6 +302,9 @@ button[type="submit"]:hover .btn-arrow {
   flex-direction: column;
   position: relative;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .col-header {
@@ -1346,4 +1349,72 @@ button.g:hover {
 @keyframes fadeIn {
   from { opacity: 0; }
   to   { opacity: 1; }
+}
+
+
+/* ==========================================================
+   BOTAO DE MICROFONE NO CONSOLE DE COMPRAS
+   ========================================================== */
+.btn-prompt-mic {
+  background: rgba(18, 30, 64, 0.85);
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  color: var(--accent-cyan);
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 0 18px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+
+.btn-prompt-mic:hover {
+  background: rgba(24, 45, 95, 1);
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 16px rgba(0, 240, 255, 0.35);
+  transform: translateY(-1px);
+}
+
+.btn-prompt-mic.recording {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: #ef4444;
+  color: #f87171;
+  animation: pulse-red 1.2s infinite;
+}
+
+@keyframes pulse-red {
+  0%, 100% { box-shadow: 0 0 8px rgba(239, 68, 68, 0.4); }
+  50% { box-shadow: 0 0 20px rgba(239, 68, 68, 0.8); }
+}
+
+/* Botao Estilizado de Upload de Audio */
+.btn-file-custom {
+  background: rgba(18, 30, 64, 0.75);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  color: var(--accent-cyan);
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 5px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+}
+
+.btn-file-custom:hover {
+  background: rgba(24, 45, 95, 0.95);
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.3);
+  transform: translateY(-1px);
 }
