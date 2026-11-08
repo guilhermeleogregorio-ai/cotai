@@ -551,6 +551,59 @@ button[type="submit"]:hover .btn-arrow {
   transform: translateY(-1px);
 }
 
+/* Botao Decidir da Tabela de Cotacoes */
+.btn-decidir {
+  background: linear-gradient(135deg, var(--accent-green) 0%, #059669 100%);
+  color: #030712;
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 12px rgba(0, 255, 157, 0.35);
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.btn-decidir:hover {
+  filter: brightness(1.15);
+  box-shadow: 0 0 18px rgba(0, 255, 157, 0.6);
+  transform: translateY(-1px);
+}
+
+.btn-decidir:active {
+  transform: translateY(0);
+}
+
+/* Protecao para botoes internos do dialog */
+dialog button {
+  font-family: inherit;
+}
+
+dialog button:not([class]) {
+  background: rgba(18, 30, 64, 0.85);
+  color: #fff;
+  border: 1px solid rgba(40, 65, 125, 0.6);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+dialog button:not([class]):hover {
+  border-color: var(--accent-cyan);
+  background: rgba(24, 45, 95, 1);
+}
+
 /* ==========================================================
    MODAL DIALOG CORPORATIVO
    ========================================================== */

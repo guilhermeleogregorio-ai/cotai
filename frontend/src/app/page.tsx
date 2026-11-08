@@ -863,7 +863,11 @@ export default function Home() {
                     value={clarifyText}
                     onChange={(e) => setClarifyText(e.target.value)}
                   />
-                  <button onClick={() => handleClarify(openRequest.id)}>
+                  <button
+                    type="button"
+                    className="btn-decidir"
+                    onClick={() => handleClarify(openRequest.id)}
+                  >
                     Enviar e Continuar
                   </button>
                 </div>
@@ -925,7 +929,11 @@ export default function Home() {
                         <td>{q.status}</td>
                         <td>
                           {openRequest.status === "comparando" && k?.viavel ? (
-                            <button onClick={() => dec(openRequest.id, q.id)}>
+                            <button
+                              type="button"
+                              className="btn-decidir"
+                              onClick={() => dec(openRequest.id, q.id)}
+                            >
                               Decidir
                             </button>
                           ) : null}
