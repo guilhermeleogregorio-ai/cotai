@@ -986,9 +986,35 @@ export default function Home() {
                                 }))
                               }
                             />
-                            <button className="g" onClick={() => rep(q.id)}>
-                              Enviar resposta
-                            </button>
+                            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "6px", flexWrap: "wrap" }}>
+                              <button className="g" onClick={() => rep(q.id)}>
+                                Enviar texto
+                              </button>
+                              <span style={{ fontSize: "11px", color: "var(--t-muted)" }}>ou enviar audio (faster-whisper):</span>
+                              <input
+                                type="file"
+                                accept="audio/*,.ogg,.mp3,.wav,.m4a"
+                                style={{ fontSize: "11px", color: "#94a3b8" }}
+                                onChange={async (e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file) return;
+                                  try {
+                                    const fd = new FormData();
+                                    fd.append("file", file);
+                                    const res = await fetch(`/api/quotes/${q.id}/audio-reply`, { method: "POST", body: fd });
+                                    if (res.ok) {
+                                      const data = await res.json();
+                                      alert(`Audio transcrito com faster-whisper:\n"${data.transcription}"\nProposta processada com sucesso!`);
+                                      await loadData();
+                                    } else {
+                                      alert("Erro ao processar audio do fornecedor.");
+                                    }
+                                  } catch (err) {
+                                    console.error("Erro ao enviar audio:", err);
+                                  }
+                                }}
+                              />
+                            </div>
                           </td>
                         </tr>
                       ) : null}
@@ -1112,6 +1138,7 @@ export default function Home() {
               <span className="footer-tag">Gemini 2.0 Flash</span>
               <span className="footer-tag">SQLite</span>
               <span className="footer-tag">Telegram Bot API</span>
+              <span className="footer-tag">faster-whisper</span>
             </div>
             <div className="footer-certs">
               <span className="footer-cert footer-cert-w3c">W3C Semantic HTML5</span>
@@ -1189,7 +1216,8 @@ export default function Home() {
                   <li><b>Backend:</b> <code>FastAPI</code> + <code>Python 3.12</code> + <code>Uvicorn</code></li>
                   <li><b>IA / LLM:</b> <code>Google Gemini 2.0 Flash</code> + Google Search Grounding</li>
                   <li><b>Banco:</b> <code>SQLite 3</code> com WAL mode</li>
-                  <li><b>Comunicacao:</b> <code>Telegram Bot API</code> (python-telegram-bot)</li>
+                  <li><b>Comunicacao:</b> <code>Telegram Bot API</code></li>
+                  <li><b>Audio AI:</b> <code>faster-whisper</code> (transcricao open-source de voz em tempo real)</li>
                   <li><b>Scraping Fallback:</b> <code>DuckDuckGo</code> + <code>BeautifulSoup4</code></li>
                 </ul>
               </div>

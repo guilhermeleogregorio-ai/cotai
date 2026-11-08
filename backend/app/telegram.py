@@ -34,7 +34,21 @@ async def edit_message(chat_id, message_id, text):
     async with httpx.AsyncClient(timeout=30) as c:
         await c.post(f"{API}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text})
 
-async def poll(on_message, on_callback=None):
+async def download_file_bytes(file_id: str):
+    """Baixa um arquivo de audio do Telegram e retorna (bytes, filename)."""
+    if not TOKEN or not file_id: return None, None
+    async with httpx.AsyncClient(timeout=60) as c:
+        res = await c.get(f"{API}/getFile", params={"file_id": file_id})
+        data = res.json()
+        if not data.get("ok"):
+            print(f"[telegram] Falha ao obter getFile para {file_id}: {data}")
+            return None, None
+        file_path = data["result"]["file_path"]
+        download_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
+        r_file = await c.get(download_url)
+        return r_file.content, os.path.basename(file_path)
+
+async def poll(on_message, on_callback=None, on_audio=None):
     if not TOKEN:
         print("[telegram] TELEGRAM_BOT_TOKEN ausente: canal desativado"); return
     offset = 0
@@ -45,8 +59,22 @@ async def poll(on_message, on_callback=None):
                 for u in r.get("result", []):
                     offset = u["update_id"] + 1
                     m = u.get("message")
-                    if m and m.get("text"):
-                        await on_message(str(m["chat"]["id"]), m["text"])
+                    if m:
+                        chat_id = str(m["chat"]["id"])
+                        if m.get("text"):
+                            await on_message(chat_id, m["text"])
+                        elif m.get("voice") and on_audio:
+                            await on_audio(chat_id, m["voice"]["file_id"], "voice.ogg")
+                        elif m.get("audio") and on_audio:
+                            fname = m["audio"].get("file_name") or "audio.mp3"
+                            await on_audio(chat_id, m["audio"]["file_id"], fname)
+                        elif m.get("document") and on_audio:
+                            doc = m["document"]
+                            fname = doc.get("file_name") or ""
+                            mime = doc.get("mime_type") or ""
+                            if mime.startswith("audio/") or any(fname.lower().endswith(ext) for ext in [".ogg", ".oga", ".mp3", ".wav", ".m4a"]):
+                                await on_audio(chat_id, doc["file_id"], fname or "audio.ogg")
+                    
                     cb = u.get("callback_query")
                     if cb and on_callback:
                         await on_callback(cb)

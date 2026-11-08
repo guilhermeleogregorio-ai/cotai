@@ -645,6 +645,41 @@ async def on_telegram(chat_id, text):
     if qs: await ingest_reply(qs[0]["id"], text)
     else: await telegram.send(chat_id, "Use /cotar para abrir uma cotação (/ajuda).")
 
+async def on_telegram_audio(chat_id, file_id, filename="voice.ogg"):
+    """
+    Recebe mensagem de audio do Telegram (voz ou arquivo).
+    Baixa os bytes, transcreve com o modelo faster-whisper e
+    repassa ao interpretador/parser como texto.
+    """
+    try:
+        await telegram.send(chat_id, "Ouvindo e transcrevendo seu audio...")
+        audio_bytes, fname = await telegram.download_file_bytes(file_id)
+        if not audio_bytes:
+            await telegram.send(chat_id, "Nao foi possivel baixar o audio. Por favor, envie novamente.")
+            return
+
+        from . import audio_agent
+        text = await asyncio.to_thread(audio_agent.transcribe_audio, audio_bytes, fname or filename)
+        if not text or not text.strip():
+            await telegram.send(chat_id, "Nao consegui identificar palavras com clareza no audio. Pode tentar gravar novamente ou digitar?")
+            return
+
+        # Verifica se e resposta de fornecedor em cotacao ativa
+        qs = db.q("SELECT * FROM quotes WHERE chat_id=? AND status IN ('enviada','respondida_parcial','aguardando_esclarecimento') ORDER BY id DESC", (chat_id,))
+        if qs:
+            qid = qs[0]["id"]
+            db.log(qs[0]["request_id"], f"Fornecedor {qs[0]['supplier']} enviou audio transcrito: '{text}'")
+            msg = f"Audio transcrito: '{text}' - Processando sua proposta..."
+            await telegram.send(chat_id, msg)
+            await ingest_reply(qid, text)
+        else:
+            # Caso nao seja fornecedor em cotacao, repassa como comando/pedido de comprador
+            await telegram.send(chat_id, f"Audio transcrito: \"{text}\"")
+            await on_telegram(chat_id, text)
+    except Exception as e:
+        print("[telegram audio error]", e)
+        await telegram.send(chat_id, f"Erro ao processar audio: {e}")
+
 async def ingest_reply(qid, text):
     qt = db.q("SELECT * FROM quotes WHERE id=?", (qid,))[0]
     req = db.q("SELECT * FROM requests WHERE id=?", (qt["request_id"],))[0]

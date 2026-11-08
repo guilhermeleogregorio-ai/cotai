@@ -1,7 +1,7 @@
 import asyncio, json
 from dotenv import load_dotenv
 load_dotenv()
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,7 +19,7 @@ app.add_middleware(
 )
 
 @app.on_event("startup")
-async def _s(): asyncio.create_task(telegram.poll(agents.on_telegram, agents.on_callback))
+async def _s(): asyncio.create_task(telegram.poll(agents.on_telegram, agents.on_callback, agents.on_telegram_audio))
 
 class New(BaseModel): text: str
 class Reply(BaseModel): text: str
@@ -76,6 +76,35 @@ def get_history():
 async def neg(rid: int): return {"enviadas": await agents.negotiate(rid)}
 @app.post("/api/quotes/{qid}/reply")  # fallback: colar a resposta do fornecedor recebida em outro canal
 async def rep(qid: int, b: Reply): await agents.ingest_reply(qid, b.text); return {"ok": True}
+
+@app.post("/api/quotes/{qid}/audio-reply")
+async def audio_reply(qid: int, file: UploadFile = File(...)):
+    """Recebe audio da proposta do fornecedor, transcreve com faster-whisper e alimenta o interpretador."""
+    from . import audio_agent
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "Arquivo de audio vazio")
+    text = await asyncio.to_thread(audio_agent.transcribe_audio, content, file.filename or "audio.ogg")
+    if not text:
+        raise HTTPException(400, "Nao foi possivel transcrever conteudo do audio")
+    
+    qt = db.q("SELECT * FROM quotes WHERE id=?", (qid,))
+    if not qt:
+        raise HTTPException(404, "Cotacao nao encontrada")
+    db.log(qt[0]["request_id"], f"Fornecedor {qt[0]['supplier']} enviou audio (transcricao: '{text}')")
+    
+    await agents.ingest_reply(qid, text)
+    return {"ok": True, "transcription": text}
+
+@app.post("/api/audio/transcribe")
+async def transcribe_only(file: UploadFile = File(...)):
+    """Endpoint utilitario para transcrever qualquer arquivo de audio usando faster-whisper."""
+    from . import audio_agent
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "Arquivo de audio vazio")
+    text = await asyncio.to_thread(audio_agent.transcribe_audio, content, file.filename or "audio.ogg")
+    return {"ok": True, "transcription": text}
 @app.post("/api/quotes/{qid}/confirm")
 async def confirm_q(qid: int): return {"ok": await agents.confirm_and_send(qid)}
 @app.get("/api/stats")
