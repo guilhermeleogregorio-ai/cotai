@@ -164,6 +164,7 @@ export default function Home() {
   const [clarifyText, setClarifyText] = useState("");
   const [replyTexts, setReplyTexts] = useState<Record<number, string>>({});
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const [showTechModal, setShowTechModal] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -351,27 +352,80 @@ export default function Home() {
   return (
     <>
       <header>
-        <h1>Comprador IA</h1>
-        <span className="stat" id="st">
-          {stats ? (
-            <>
-              {stats.decididas} decididas
-              {stats.entregues ? ` · ${stats.entregues} entregues` : ""} · economia{" "}
-              <b>{brl(stats.economia_total)}</b>
-            </>
-          ) : null}
-        </span>
+        <div className="header-brand">
+          <div className="header-logo-badge">IA</div>
+          <div>
+            <h1>Comprador IA</h1>
+            <span className="header-sub">Automação de Compras B2B com Agentes Inteligentes</span>
+          </div>
+          <span className="header-edition-pill">
+            Guerra das IAs · Digitaly 03
+          </span>
+        </div>
+        <div className="header-stats-hud">
+          <div className="hud-metric">
+            <span className="hud-label">Decididas</span>
+            <span className="hud-value">{stats ? stats.decididas : 0}</span>
+          </div>
+          <div className="hud-divider" />
+          <div className="hud-metric">
+            <span className="hud-label">Economia Total</span>
+            <span className="hud-value hud-money">{stats ? brl(stats.economia_total) : "R$ 0,00"}</span>
+          </div>
+        </div>
       </header>
 
       <form id="f" onSubmit={handleSubmit}>
-        <textarea
-          id="t"
-          rows={2}
-          placeholder="Ex: preciso de 800m de cabo flexivel 2,5mm pra entregar em Ribeirão Preto ate dia 20"
-          value={newText}
-          onChange={(e) => setNewText(e.target.value)}
-        />
-        <button type="submit">Cotar</button>
+        <div className="prompt-container">
+          <div className="prompt-header">
+            <span className="prompt-label">— CONSOLE DE OPERAÇÕES B2B · AGENTES DE IA</span>
+            <span className="prompt-hint">Digite o pedido em linguagem natural</span>
+          </div>
+          <div className="prompt-input-row">
+            <textarea
+              id="t"
+              rows={2}
+              placeholder="Ex: preciso de 800m de cabo flexivel 2,5mm pra entregar em Ribeirão Preto ate dia 20"
+              value={newText}
+              onChange={(e) => setNewText(e.target.value)}
+            />
+            <button type="submit">
+              <span>Cotar</span>
+              <span className="btn-arrow">→</span>
+            </button>
+          </div>
+          <div className="prompt-suggestions">
+            <span className="sug-title">Exemplos rápidos:</span>
+            <button
+              type="button"
+              className="sug-pill"
+              onClick={() => setNewText("800m de cabo flexível 2,5mm para Ribeirão Preto SP até dia 20")}
+            >
+              800m cabo flexível
+            </button>
+            <button
+              type="button"
+              className="sug-pill"
+              onClick={() => setNewText("cabo de rede 10metros, São Carlos SP, em até 7 dias")}
+            >
+              Cabo de rede 10m
+            </button>
+            <button
+              type="button"
+              className="sug-pill"
+              onClick={() => setNewText("35 tijolos para São Carlos SP")}
+            >
+              35 tijolos
+            </button>
+            <button
+              type="button"
+              className="sug-pill"
+              onClick={() => setNewText("1 cadeira gamer ergonômica para São Carlos SP em até 7 dias")}
+            >
+              Cadeira gamer
+            </button>
+          </div>
+        </div>
       </form>
 
       {/* Kanban Board */}
@@ -383,10 +437,19 @@ export default function Home() {
               : r.status === c
           );
           return (
-            <div className="col" key={c}>
-              <h3>
-                {N[c]} ({colData.length})
-              </h3>
+            <div className={`col col-${c}`} key={c}>
+              <div className="col-header">
+                <span className="col-header-title">
+                  {N[c]}
+                </span>
+                <span className="col-badge-count">{colData.length}</span>
+              </div>
+              {colData.length === 0 ? (
+                <div className="col-empty">
+                  
+                  <span className="col-empty-text">Nenhum pedido nesta etapa</span>
+                </div>
+              ) : null}
               {colData.map((r) => {
                 const responded = (r.quotes || []).filter((q) =>
                   q.status.startsWith("respondida")
@@ -394,24 +457,67 @@ export default function Home() {
                 const totalQuotes = (r.quotes || []).length;
                 const lastLog =
                   r.log && r.log.length > 0 ? r.log[r.log.length - 1] : "na fila";
+                const locationStr = getLocation(r.item);
 
                 return (
                   <div className="card" key={r.id} onClick={() => show(r.id)}>
-                    <b>
-                      {r.item
-                        ? `${r.item.produto}${r.item.quantidade != null ? ` · ${r.item.quantidade}${r.item.unidade || ""}` : ""}`
-                        : r.raw.slice(0, 50)}
-                    </b>
-                    {r.status === "aguardando_esclarecimento" ? (
-                      <small style={{ color: "#f59e0b", fontWeight: "bold" }}>
-                        ⚠️ Precisa de detalhes
-                      </small>
-                    ) : (
-                      <small>
-                        {responded}/{totalQuotes} cotações
-                      </small>
-                    )}
-                    <small>{lastLog}</small>
+                    <div className="card-top-bar">
+                      <span className={`card-status-pill status-${r.status}`}>
+                        {r.status === "aguardando_esclarecimento"
+                          ? "● ESPECIFICAÇÃO"
+                          : r.status === "solicitado"
+                          ? "● NA FILA"
+                          : r.status === "cotando"
+                          ? "● COTANDO"
+                          : r.status === "comparando"
+                          ? "● COMPARANDO"
+                          : "● DECIDIDO"}
+                      </span>
+                      <span className="card-id">#{r.id}</span>
+                    </div>
+
+                    <h4 className="card-title">
+                      {r.item?.produto || r.raw.slice(0, 50)}
+                    </h4>
+
+                    <div className="card-meta-chips">
+                      {r.item?.quantidade != null ? (
+                        <span className="card-chip">
+                          QTD: {r.item.quantidade} {r.item.unidade || "un"}
+                        </span>
+                      ) : null}
+                      {locationStr ? (
+                        <span className="card-chip chip-location">
+                          DESTINO: {locationStr}
+                        </span>
+                      ) : null}
+                      {r.item?.prazo_max_dias ? (
+                        <span className="card-chip chip-time">
+                          PRAZO: {r.item.prazo_max_dias}d
+                        </span>
+                      ) : null}
+                    </div>
+
+                    {totalQuotes > 0 ? (
+                      <div className="card-progress-wrapper">
+                        <div className="card-progress-bar">
+                          <div
+                            className="card-progress-fill"
+                            style={{
+                              width: `${Math.round((responded / totalQuotes) * 100)}%`,
+                            }}
+                          />
+                        </div>
+                        <span className="card-progress-text">
+                          {responded} de {totalQuotes} cotações ({Math.round((responded / totalQuotes) * 100)}%)
+                        </span>
+                      </div>
+                    ) : null}
+
+                    <div className="card-terminal-log">
+                      <span className="card-log-prompt">&gt;</span>
+                      <span className="card-log-text">{lastLog}</span>
+                    </div>
 
                     {/* Botão "Entregue" para produtos na aba Decidido */}
                     {c === "decidido" ? (
@@ -431,7 +537,7 @@ export default function Home() {
                           }}
                           title="Marcar como entregue e mover para o histórico de compras"
                         >
-                          ✓ Entregue
+                          Concluir Entrega
                         </button>
                       </div>
                     ) : null}
@@ -452,7 +558,7 @@ export default function Home() {
             onClick={() => setShowHistory((prev) => !prev)}
             title="Exibir ou recolher o Histórico de Compras"
           >
-            <span className="history-icon">📦</span>
+            
             <span>Histórico de Compras</span>
             <span className="history-badge">{last5History.length} / 5</span>
             <span className="history-arrow">
@@ -465,7 +571,7 @@ export default function Home() {
           <div className="history-content">
             <div className="history-header">
               <div>
-                <h2>📦 Histórico de Compras</h2>
+                <h2>Histórico de Compras</h2>
                 <p className="history-subtitle">
                   Exibindo as últimas 5 cotações entregues · Produtos comprados, quantidades, locais e cotações separadas por data
                 </p>
@@ -474,17 +580,17 @@ export default function Home() {
 
             {last5History.length === 0 ? (
               <div className="history-empty">
-                <span style={{ fontSize: "32px" }}>📦</span>
+                
                 <p>Nenhuma compra entregue registrada no histórico ainda.</p>
                 <small style={{ color: "var(--m)" }}>
-                  Finalize uma cotação e clique no botão <b>&quot;✓ Entregue&quot;</b> na coluna <b>Decidido</b> do Kanban acima para arquivá-la aqui (armazenando até as últimas 5 cotações).
+                  Finalize uma cotação e clique no botão <b>&quot;Entregue&quot;</b> na coluna <b>Decidido</b> do Kanban acima para arquivá-la aqui (armazenando até as últimas 5 cotações).
                 </small>
               </div>
             ) : (
               groupedHistory.map((grp) => (
                 <div className="history-date-group" key={grp.dateKey}>
                   <div className="history-date-header">
-                    <span className="history-date-icon">📅</span>
+                    
                     <span>
                       {formatDateHeader(
                         grp.items[0].delivered_at || grp.items[0].created
@@ -520,19 +626,19 @@ export default function Home() {
                             </h4>
                             <div className="history-badges">
                               <span className="history-tag">
-                                📦 Qtd: <b>{qtd}</b>
+                                Qtd: <b>{qtd}</b>
                               </span>
                               {local ? (
                                 <span className="history-tag tag-loc">
-                                  📍 Local: <b>{local}</b>
+                                  Destino: <b>{local}</b>
                                 </span>
                               ) : null}
                               <span className="history-tag tag-ok">
-                                ✓ Entregue
+                                Entregue
                               </span>
                               {r.delivered_at ? (
                                 <span className="history-tag">
-                                  🕒 {formatTime(r.delivered_at)}
+                                  {formatTime(r.delivered_at)}
                                 </span>
                               ) : null}
                             </div>
@@ -548,7 +654,7 @@ export default function Home() {
                                   Fornecedor Comprado:
                                 </div>
                                 <div className="history-winner-name">
-                                  🏆 {chosenQ.supplier}
+                                  {chosenQ.supplier}
                                 </div>
                               </div>
                               <div className="history-winner-totals">
@@ -646,7 +752,7 @@ export default function Home() {
                                       <td>
                                         {isWinner ? (
                                           <span className="badge-winner">
-                                            ✓ Comprado
+                                            Comprado
                                           </span>
                                         ) : (
                                           <span className="badge-other">
@@ -670,7 +776,7 @@ export default function Home() {
                             onClick={() => show(r.id)}
                             style={{ fontSize: "12px", padding: "4px 10px" }}
                           >
-                            🔍 Ver Detalhes
+                            Ver Detalhes
                           </button>
                           <button
                             type="button"
@@ -683,7 +789,7 @@ export default function Home() {
                             }}
                             title="Mover de volta para a coluna Decidido no Kanban"
                           >
-                            ↩ Desfazer Entrega
+                            Desfazer Entrega
                           </button>
                         </div>
                       </div>
@@ -731,7 +837,7 @@ export default function Home() {
                 }}
               >
                 <p style={{ margin: 0, fontWeight: "bold", color: "#f59e0b" }}>
-                  ⚠️ Especificação genérica identificada
+                  ESPECIFICAÇÃO TÉCNICA NECESSÁRIA
                 </p>
                 <p style={{ fontSize: "13px", margin: "6px 0 10px 0" }}>
                   Informe mais detalhes técnicos para prosseguir com a pesquisa (ex: dimensões, material, bitola, norma):
@@ -917,7 +1023,7 @@ export default function Home() {
                     closeDialog();
                   }}
                 >
-                  ✓ Marcar como Entregue
+                  Marcar como Entregue
                 </button>
               </div>
             ) : openRequest.status === "entregue" ? (
@@ -934,7 +1040,7 @@ export default function Home() {
                 }}
               >
                 <p style={{ margin: 0 }}>
-                  ✅ Entregue · economia <b>{brl(openRequest.savings)}</b>
+                  Entregue · economia <b>{brl(openRequest.savings)}</b>
                 </p>
                 <button
                   type="button"
@@ -969,6 +1075,145 @@ export default function Home() {
           </div>
         ) : null}
       </dialog>
+      {/* Rodape Institucional */}
+      <footer className="site-footer">
+        <div className="footer-main">
+          <div className="footer-brand-col">
+            <div className="footer-brand-row">
+              <div className="footer-logo">IA</div>
+              <div>
+                <div className="footer-title">Comprador IA</div>
+                <div className="footer-subtitle">Automacao de Compras B2B com Agentes Inteligentes</div>
+              </div>
+            </div>
+            <p className="footer-desc">
+              Plataforma de cotacao automatizada que utiliza agentes de inteligencia artificial
+              para buscar, comparar e negociar as melhores ofertas do mercado B2B em tempo real.
+            </p>
+            <div className="footer-edition">
+              Guerra das IAs · Hackathon Digitaly 03 · Sao Carlos - SP
+            </div>
+          </div>
+
+          <div className="footer-stack-col">
+            <h4 className="footer-col-title">Stack Tecnologico</h4>
+            <div className="footer-tech-tags">
+              <span className="footer-tag">Next.js 14</span>
+              <span className="footer-tag">React 18</span>
+              <span className="footer-tag">TypeScript</span>
+              <span className="footer-tag">FastAPI</span>
+              <span className="footer-tag">Python 3.12</span>
+              <span className="footer-tag">Gemini 2.0 Flash</span>
+              <span className="footer-tag">SQLite</span>
+              <span className="footer-tag">Telegram Bot API</span>
+            </div>
+            <div className="footer-certs">
+              <span className="footer-cert footer-cert-w3c">W3C Semantic HTML5</span>
+              <span className="footer-cert footer-cert-arch">Clean Architecture</span>
+            </div>
+            <button
+              type="button"
+              className="footer-specs-btn"
+              onClick={() => setShowTechModal(true)}
+            >
+              Ver Especificacoes de Engenharia
+            </button>
+          </div>
+
+          <div className="footer-team-col">
+            <h4 className="footer-col-title">Squad de Desenvolvimento</h4>
+            <ul className="footer-team-list">
+              <li><b>Guilherme Gregorio</b><span>Full-Stack / AI Agents</span></li>
+              <li><b>Gabriel Ribeiro</b><span>Full-Stack / UI-UX</span></li>
+              <li><b>Caua Habermann</b><span>Full-Stack / Integration</span></li>
+              <li><b>Juliana Nishimura</b><span>Data Engineer / QA</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div className="footer-bottom">
+          <span>Comprador IA · Hackathon Guerra das IAs · Digitaly 03 · {new Date().getFullYear()}</span>
+          <span className="footer-bottom-right">Desenvolvido com Next.js, FastAPI e Google Gemini AI</span>
+        </div>
+      </footer>
+
+      {/* Modal de Especificacoes de Engenharia */}
+      {showTechModal ? (
+        <div
+          className="tech-modal-overlay"
+          onClick={() => setShowTechModal(false)}
+        >
+          <div
+            className="tech-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="tech-modal-header">
+              <div>
+                <h2 style={{ margin: 0, fontFamily: "'Space Grotesk', sans-serif", color: "#fff" }}>
+                  Especificacoes de Engenharia
+                </h2>
+                <span className="tech-modal-sub">
+                  COMPRADOR IA // HACKATHON GUERRA DAS IAs // DIGITALY 03
+                </span>
+              </div>
+              <button
+                type="button"
+                className="top-bar-btn"
+                onClick={() => setShowTechModal(false)}
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div className="tech-modal-grid">
+              <div className="tech-box">
+                <h3>Squad de Desenvolvimento</h3>
+                <ul className="tech-list">
+                  <li><b>Guilherme Gregorio</b> — Backend Engineer / AI Agent Architecture</li>
+                  <li><b>Gabriel Ribeiro</b> — Frontend Engineer / UI-UX</li>
+                  <li><b>Caua Habermann</b> — Full-Stack Engineer / Integration</li>
+                  <li><b>Juliana Nishimura</b> — Data Engineer / QA</li>
+                </ul>
+              </div>
+
+              <div className="tech-box">
+                <h3>Stack Tecnologico</h3>
+                <ul className="tech-list">
+                  <li><b>Frontend:</b> <code>Next.js 14</code> + <code>React 18</code> + <code>TypeScript</code></li>
+                  <li><b>Backend:</b> <code>FastAPI</code> + <code>Python 3.12</code> + <code>Uvicorn</code></li>
+                  <li><b>IA / LLM:</b> <code>Google Gemini 2.0 Flash</code> + Google Search Grounding</li>
+                  <li><b>Banco:</b> <code>SQLite 3</code> com WAL mode</li>
+                  <li><b>Comunicacao:</b> <code>Telegram Bot API</code> (python-telegram-bot)</li>
+                  <li><b>Scraping Fallback:</b> <code>DuckDuckGo</code> + <code>BeautifulSoup4</code></li>
+                </ul>
+              </div>
+
+              <div className="tech-box">
+                <h3>Conformidade W3C</h3>
+                <ul className="tech-list">
+                  <li><b>HTML5 Semantico:</b> header, main, section, article, dialog, nav</li>
+                  <li><b>ARIA:</b> roles, aria-label, aria-live para acessibilidade</li>
+                  <li><b>CSS Custom Properties:</b> design tokens em variaveis CSS nativas</li>
+                  <li><b>Responsividade:</b> CSS Grid + Flexbox + media queries</li>
+                  <li><b>Web Standards:</b> Fetch API, ES2022+, sem dependencias de runtime externas</li>
+                </ul>
+              </div>
+
+              <div className="tech-box">
+                <h3>Clean Architecture</h3>
+                <ul className="tech-list">
+                  <li><b>Camada de Dominio:</b> entidades Request, Quote, Ranking independentes</li>
+                  <li><b>Camada de Aplicacao:</b> agentes orquestradores (interpret, search, compare, decide, negotiate)</li>
+                  <li><b>Camada de Infra:</b> SQLite repository, Gemini adapter, Telegram adapter</li>
+                  <li><b>Separacao de Concerns:</b> frontend SPA desacoplado do backend via REST API</li>
+                  <li><b>Inversao de Dependencia:</b> fallback hierarchy (Gemini → DuckDuckGo → Simulacao)</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
     </>
   );
 }
